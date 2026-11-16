@@ -50,7 +50,7 @@ ENV NODE_ENV=production \
     TRANSCODE_CONCURRENCY=1
 
 RUN mkdir -p /work && chown node:node /work
-VOLUME ["/work"]
+# Không dùng lệnh VOLUME: Railway cấm, gắn Railway Volume vào /work thay thế.
 USER node
 WORKDIR /app/apps/worker
 
