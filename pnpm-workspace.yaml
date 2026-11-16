@@ -1,0 +1,15 @@
+packages:
+  - apps/*
+  - packages/*
+
+allowBuilds:
+  sharp: true
+  unrs-resolver: true
+  prisma: true
+  "@prisma/engines": true
+  "@prisma/client": true
+  "@nestjs/core": true
+  argon2: true
+  esbuild: true
+  msgpackr-extract: true
+  ffmpeg-static: true

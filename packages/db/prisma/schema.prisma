@@ -1,0 +1,655 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────── Người dùng ─────────────────────────
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+model User {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  email           String    @unique
+  passwordHash    String
+  role            UserRole  @default(USER)
+  emailVerifiedAt DateTime?
+  disabledAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  sessions      Session[]
+  profiles      Profile[]
+  subscriptions Subscription[]
+  payments      Payment[]
+  emailTokens   EmailToken[]
+}
+
+/// Một phiên đăng nhập trên một thiết bị (refresh token xoay vòng).
+model Session {
+  id               String    @id @default(uuid(7)) @db.Uuid
+  userId           String    @db.Uuid
+  refreshTokenHash String    @unique
+  deviceName       String?
+  userAgent        String?
+  ip               String?
+  lastUsedAt       DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+enum EmailTokenType {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+model EmailToken {
+  id        String         @id @default(uuid(7)) @db.Uuid
+  userId    String         @db.Uuid
+  type      EmailTokenType
+  tokenHash String         @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+}
+
+model Profile {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  userId    String   @db.Uuid
+  name      String
+  avatarKey String
+  isKids    Boolean  @default(false)
+  language  String   @default("vi")
+  pinHash   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  watchProgress WatchProgress[]
+  myList        MyListItem[]
+  ratings       Rating[]
+  viewEvents    ViewEvent[]
+
+  @@index([userId])
+}
+
+// ───────────────────────── Thuê bao ─────────────────────────
+
+model Plan {
+  id                   String   @id @default(uuid(7)) @db.Uuid
+  code                 String   @unique
+  name                 String
+  description          String?
+  /// Giá theo đơn vị nhỏ nhất của tiền tệ (VND: đồng, USD: cent)
+  priceAmount          Int
+  currency             String   @default("VND")
+  intervalMonths       Int      @default(1)
+  /// Chiều cao tối đa được phát: 480, 720, 1080, 2160
+  maxHeight            Int      @default(1080)
+  maxConcurrentStreams Int      @default(1)
+  maxProfiles          Int      @default(5)
+  isActive             Boolean  @default(true)
+  sortOrder            Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  subscriptions Subscription[]
+  payments      Payment[]
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+model Subscription {
+  id                 String             @id @default(uuid(7)) @db.Uuid
+  userId             String             @db.Uuid
+  planId             String             @db.Uuid
+  status             SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean            @default(false)
+  /// manual | payos | vnpay | momo | stripe
+  provider           String             @default("manual")
+  providerRef        String?
+  note               String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan     Plan      @relation(fields: [planId], references: [id])
+  payments Payment[]
+
+  @@index([userId, status])
+  @@index([currentPeriodEnd])
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+model Payment {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  userId         String        @db.Uuid
+  planId         String        @db.Uuid
+  subscriptionId String?       @db.Uuid
+  provider       String
+  providerRef    String?
+  amount         Int
+  currency       String
+  status         PaymentStatus @default(PENDING)
+  rawPayload     Json?
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan         Plan          @relation(fields: [planId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@unique([provider, providerRef])
+  @@index([userId])
+}
+
+// ───────────────────────── Nội dung ─────────────────────────
+
+enum TitleType {
+  MOVIE
+  SERIES
+}
+
+enum PublishStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model Title {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  type           TitleType
+  slug           String        @unique
+  tmdbId         Int?
+  imdbId         String?
+  name           String
+  originalName   String?
+  tagline        String?
+  overview       String?
+  releaseDate    DateTime?     @db.Date
+  runtimeMinutes Int?
+  /// Nhãn độ tuổi hiển thị: P, K, T13, T16, T18...
+  maturityRating String?
+  originalLang   String?
+  countries      String[]
+  tmdbRating     Float?
+  status         PublishStatus @default(DRAFT)
+  publishedAt    DateTime?
+  /// Tên các trường admin đã sửa tay → đồng bộ TMDB sẽ không ghi đè
+  overriddenFields String[]
+  tmdbSyncedAt   DateTime?
+  /// Trailer/preview ngắn phát ở hero và hover card
+  previewAssetId String?       @unique @db.Uuid
+  /// Phim lẻ: asset phát chính
+  mainAssetId    String?       @unique @db.Uuid
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  previewAsset MediaAsset? @relation("TitlePreview", fields: [previewAssetId], references: [id])
+  mainAsset    MediaAsset? @relation("TitleMain", fields: [mainAssetId], references: [id])
+
+  genres          TitleGenre[]
+  credits         Credit[]
+  images          Image[]
+  seasons         Season[]
+  episodes        Episode[]
+  watchProgress   WatchProgress[]
+  myList          MyListItem[]
+  ratings         Rating[]
+  viewEvents      ViewEvent[]
+  collectionItems CollectionItem[]
+  billboards      Billboard[]
+
+  @@unique([type, tmdbId])
+  @@index([status, publishedAt])
+  @@index([type, status])
+}
+
+model Genre {
+  id     String  @id @default(uuid(7)) @db.Uuid
+  slug   String  @unique
+  name   String
+  nameEn String?
+  tmdbId Int?    @unique
+
+  titles   TitleGenre[]
+  homeRows HomeRow[]
+}
+
+model TitleGenre {
+  titleId String @db.Uuid
+  genreId String @db.Uuid
+
+  title Title @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  genre Genre @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([titleId, genreId])
+  @@index([genreId])
+}
+
+model Person {
+  id         String  @id @default(uuid(7)) @db.Uuid
+  tmdbId     Int?    @unique
+  name       String
+  profileKey String?
+
+  credits Credit[]
+}
+
+enum CreditRole {
+  CAST
+  DIRECTOR
+  WRITER
+  CREATOR
+}
+
+model Credit {
+  id        String     @id @default(uuid(7)) @db.Uuid
+  titleId   String     @db.Uuid
+  personId  String     @db.Uuid
+  role      CreditRole
+  character String?
+  sortOrder Int        @default(0)
+
+  title  Title  @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([titleId, personId, role])
+  @@index([personId])
+}
+
+enum ImageKind {
+  POSTER
+  BACKDROP
+  LOGO
+  STILL
+}
+
+model Image {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  titleId   String?   @db.Uuid
+  episodeId String?   @db.Uuid
+  kind      ImageKind
+  /// Object key trong bucket media (images/{titleId}/...)
+  key       String
+  width     Int?
+  height    Int?
+  /// Màu chủ đạo/blur placeholder
+  blurData  String?
+  language  String?
+  isPrimary Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  title   Title?   @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  episode Episode? @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@index([titleId, kind])
+  @@index([episodeId])
+}
+
+model Season {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  titleId      String    @db.Uuid
+  seasonNumber Int
+  name         String?
+  overview     String?
+  airDate      DateTime? @db.Date
+
+  title    Title     @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  episodes Episode[]
+
+  @@unique([titleId, seasonNumber])
+}
+
+model Episode {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  titleId        String        @db.Uuid
+  seasonId       String        @db.Uuid
+  episodeNumber  Int
+  name           String?
+  overview       String?
+  runtimeMinutes Int?
+  airDate        DateTime?     @db.Date
+  status         PublishStatus @default(DRAFT)
+  introStartSec  Int?
+  introEndSec    Int?
+  creditsStartSec Int?
+  mainAssetId    String?       @unique @db.Uuid
+
+  title     Title       @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  season    Season      @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  mainAsset MediaAsset? @relation("EpisodeMain", fields: [mainAssetId], references: [id])
+
+  images        Image[]
+  watchProgress WatchProgress[]
+
+  @@unique([seasonId, episodeNumber])
+  @@index([titleId])
+}
+
+// ───────────────────────── Media ─────────────────────────
+
+enum ProbeStatus {
+  PENDING
+  OK
+  FAILED
+  SKIPPED
+}
+
+/// Một object trong bucket nguồn, điền bởi script audit / màn duyệt bucket.
+model SourceFile {
+  id           String      @id @default(uuid(7)) @db.Uuid
+  bucket       String
+  key          String
+  sizeBytes    BigInt
+  etag         String?
+  lastModified DateTime?
+  probeStatus  ProbeStatus @default(PENDING)
+  probeError   String?
+  container    String?
+  durationSec  Float?
+  videoCodec   String?
+  width        Int?
+  height       Int?
+  frameRate    Float?
+  bitrateKbps  Int?
+  isHdr        Boolean?
+  audioTracks  Json?
+  subtitleTracks Json?
+  /// Kết quả ffprobe đầy đủ
+  probeData    Json?
+  probedAt     DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  assets MediaAsset[]
+
+  @@unique([bucket, key])
+  @@index([probeStatus])
+}
+
+enum AssetKind {
+  MAIN
+  PREVIEW
+}
+
+enum AssetStatus {
+  PENDING
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+}
+
+model MediaAsset {
+  id           String      @id @default(uuid(7)) @db.Uuid
+  sourceFileId String?     @db.Uuid
+  kind         AssetKind   @default(MAIN)
+  status       AssetStatus @default(PENDING)
+  durationSec  Float?
+  /// Prefix đầu ra trong bucket media: hls/{id}
+  outputPrefix String?
+  /// Key AES-128 (16 byte) đã mã hóa bằng MEDIA_KEY_ENCRYPTION_SECRET (AES-256-GCM)
+  encKeyCipher Bytes?
+  encKeyIv     Bytes?
+  encKeyTag    Bytes?
+  /// IV dùng trong #EXT-X-KEY (hex, 16 byte)
+  hlsIv        String?
+  thumbsVttKey String?
+  posterFrameKey String?
+  errorMessage String?
+  readyAt      DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  sourceFile SourceFile? @relation(fields: [sourceFileId], references: [id])
+
+  renditions     Rendition[]
+  subtitleTracks SubtitleTrack[]
+  audioTracks    AudioTrack[]
+  jobs           TranscodeJob[]
+
+  titleAsPreview Title?   @relation("TitlePreview")
+  titleAsMain    Title?   @relation("TitleMain")
+  episodeAsMain  Episode? @relation("EpisodeMain")
+
+  @@index([status])
+  @@index([sourceFileId])
+}
+
+model Rendition {
+  id           String @id @default(uuid(7)) @db.Uuid
+  assetId      String @db.Uuid
+  /// 360p, 480p, 720p, 1080p
+  name         String
+  width        Int
+  height       Int
+  videoKbps    Int
+  audioKbps    Int
+  codecs       String
+  playlistKey  String
+
+  asset MediaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, name])
+}
+
+model SubtitleTrack {
+  id        String  @id @default(uuid(7)) @db.Uuid
+  assetId   String  @db.Uuid
+  language  String
+  label     String
+  /// Object key file .vtt
+  key       String
+  isDefault Boolean @default(false)
+  isForced  Boolean @default(false)
+
+  asset MediaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+}
+
+model AudioTrack {
+  id          String  @id @default(uuid(7)) @db.Uuid
+  assetId     String  @db.Uuid
+  language    String
+  label       String
+  channels    Int     @default(2)
+  playlistKey String?
+  isDefault   Boolean @default(false)
+
+  asset MediaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+model TranscodeJob {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  assetId    String    @db.Uuid
+  status     JobStatus @default(QUEUED)
+  progress   Int       @default(0)
+  stage      String?
+  attempt    Int       @default(0)
+  queueJobId String?
+  error      String?
+  log        String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  asset MediaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@index([status])
+}
+
+// ───────────────────────── Cá nhân hóa ─────────────────────────
+
+model WatchProgress {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  profileId   String   @db.Uuid
+  titleId     String   @db.Uuid
+  episodeId   String?  @db.Uuid
+  positionSec Float
+  durationSec Float
+  completed   Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  profile Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  title   Title    @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  episode Episode? @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, updatedAt])
+  @@index([profileId, titleId])
+}
+
+model MyListItem {
+  profileId String   @db.Uuid
+  titleId   String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  title   Title   @relation(fields: [titleId], references: [id], onDelete: Cascade)
+
+  @@id([profileId, titleId])
+  @@index([profileId, createdAt])
+}
+
+enum RatingValue {
+  DISLIKE
+  LIKE
+  LOVE
+}
+
+model Rating {
+  profileId String      @db.Uuid
+  titleId   String      @db.Uuid
+  value     RatingValue
+  updatedAt DateTime    @updatedAt
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  title   Title   @relation(fields: [titleId], references: [id], onDelete: Cascade)
+
+  @@id([profileId, titleId])
+}
+
+/// Một lượt bắt đầu xem, dùng cho Trending / Top 10.
+model ViewEvent {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  profileId String   @db.Uuid
+  titleId   String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  title   Title   @relation(fields: [titleId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([titleId, createdAt])
+}
+
+// ───────────────────────── Biên tập ─────────────────────────
+
+model Collection {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items    CollectionItem[]
+  homeRows HomeRow[]
+}
+
+model CollectionItem {
+  collectionId String @db.Uuid
+  titleId      String @db.Uuid
+  sortOrder    Int    @default(0)
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  title      Title      @relation(fields: [titleId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, titleId])
+  @@index([collectionId, sortOrder])
+}
+
+enum HomeRowKind {
+  COLLECTION
+  GENRE
+  TRENDING
+  TOP10
+  CONTINUE_WATCHING
+  MY_LIST
+  NEW_RELEASES
+}
+
+model HomeRow {
+  id           String      @id @default(uuid(7)) @db.Uuid
+  kind         HomeRowKind
+  title        String
+  collectionId String?     @db.Uuid
+  genreId      String?     @db.Uuid
+  /// null = cả phim lẻ và phim bộ
+  titleType    TitleType?
+  sortOrder    Int         @default(0)
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  collection Collection? @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  genre      Genre?      @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, sortOrder])
+}
+
+model Billboard {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  titleId   String    @db.Uuid
+  startsAt  DateTime?
+  endsAt    DateTime?
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  title Title @relation(fields: [titleId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, sortOrder])
+}

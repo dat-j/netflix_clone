@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. The brand accent is ONE variable: change --brand / --brand-hover
+ * (and the BRAND constant in src/lib/brand.ts) to rebrand the whole product.
+ */
+:root {
+  --brand: #ff5a3c;
+  --brand-hover: #ff7357;
+  --brand-ink: #ffffff;
+
+  --bg: #141414;
+  --bg-elevated: #181818;
+  --bg-raised: #232323;
+  --bg-sunken: #0b0b0b;
+  --line: rgb(255 255 255 / 0.12);
+  --line-strong: rgb(255 255 255 / 0.32);
+  --fg: #ffffff;
+  --fg-muted: #b3b3b3;
+  --fg-subtle: #808080;
+  --success: #46d369;
+  --warning: #f5b301;
+  --danger: #ff5f5f;
+
+  /* Row geometry, shared by sliders, grids and the billboard */
+  --gutter: 4vw;
+  --row-gap: 0.4vw;
+  --header-h: 68px;
+  color-scheme: dark;
+}
+
+@media (max-width: 799px) {
+  :root {
+    --header-h: 56px;
+    --row-gap: 6px;
+  }
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-ink: var(--brand-ink);
+  --color-bg: var(--bg);
+  --color-elevated: var(--bg-elevated);
+  --color-raised: var(--bg-raised);
+  --color-sunken: var(--bg-sunken);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--fg-muted);
+  --color-subtle: var(--fg-subtle);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-brand-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-brand-display), var(--font-brand-sans), ui-sans-serif, system-ui, sans-serif;
+  --spacing-gutter: var(--gutter);
+  --spacing-header: var(--header-h);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-fade-in: fade-in 0.3s var(--ease-standard) both;
+  --animate-spin-slow: spin 1s linear infinite;
+
+  @keyframes shimmer {
+    from { background-position: -200% 0; }
+    to { background-position: 200% 0; }
+  }
+  @keyframes dialog-in {
+    from { opacity: 0; scale: 0.96; }
+    to { opacity: 1; scale: 1; }
+  }
+  @keyframes sheet-in {
+    from { opacity: 0.4; translate: 0 40px; }
+    to { opacity: 1; translate: 0 0; }
+  }
+  @keyframes accordion-down {
+    from { height: 0; }
+    to { height: var(--radix-accordion-content-height); }
+  }
+  @keyframes accordion-up {
+    from { height: var(--radix-accordion-content-height); }
+    to { height: 0; }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: var(--brand);
+    color: var(--brand-ink);
+  }
+  /* Keyboard focus is always obvious, mouse focus never is */
+  :focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  img {
+    -webkit-user-drag: none;
+  }
+}
+
+@layer components {
+  .skeleton {
+    background: linear-gradient(90deg, #202020 0%, #2b2b2b 40%, #202020 80%) 0 0 / 200% 100%;
+    animation: var(--animate-shimmer);
+  }
+
+  /* Netflix-style row metrics: items per page by breakpoint */
+  .row-metrics {
+    --per: 2;
+  }
+  @media (min-width: 500px) { .row-metrics { --per: 3; } }
+  @media (min-width: 800px) { .row-metrics { --per: 4; } }
+  @media (min-width: 1100px) { .row-metrics { --per: 5; } }
+  @media (min-width: 1400px) { .row-metrics { --per: 6; } }
+  @media (min-width: 2200px) { .row-metrics { --per: 7; } }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  .text-shadow {
+    text-shadow: 0 1px 4px rgb(0 0 0 / 0.55);
+  }
+
+  .scrim-bottom {
+    background: linear-gradient(180deg, transparent 0%, rgb(20 20 20 / 0.15) 50%, rgb(20 20 20 / 0.75) 80%, var(--bg) 100%);
+  }
+  .scrim-left {
+    background: linear-gradient(77deg, rgb(0 0 0 / 0.65) 0%, rgb(0 0 0 / 0.25) 45%, transparent 75%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

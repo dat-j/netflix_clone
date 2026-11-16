@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/*.tsbuildinfo
+packages/db/generated
+.env
+.env.*
+!.env.example
+.git
+reports
+tmp
+apps/api/*
+!apps/api/package.json
+apps/worker/*
+!apps/worker/package.json

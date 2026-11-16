@@ -1,0 +1,23 @@
+{
+  "name": "streaming-platform",
+  "private": true,
+  "packageManager": "pnpm@12.21.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "infra:up": "docker compose -f infra/docker-compose.dev.yml --env-file .env up -d",
+    "infra:down": "docker compose -f infra/docker-compose.dev.yml --env-file .env down",
+    "db:generate": "pnpm --filter @app/db generate",
+    "db:migrate": "pnpm --filter @app/db migrate:dev",
+    "db:seed": "pnpm --filter @app/db seed",
+    "audit:bucket": "pnpm --filter @app/worker audit:bucket"
+  },
+  "devDependencies": {
+    "turbo": "latest",
+    "typescript": "^6.0.2"
+  }
+}

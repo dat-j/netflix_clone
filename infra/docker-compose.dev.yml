@@ -1,0 +1,59 @@
+name: streaming-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # S3-compatible cho dev (image minio/minio không còn trên Docker Hub)
+  s3:
+    image: versity/versitygw:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - mkdir -p /data/source /data/media /meta && exec versitygw --port :7070 --access "$$ROOT_ACCESS_KEY" --secret "$$ROOT_SECRET_KEY" --region us-east-1 posix --sidecar /meta /data
+    environment:
+      ROOT_ACCESS_KEY: ${S3_ROOT_USER}
+      ROOT_SECRET_KEY: ${S3_ROOT_PASSWORD}
+    ports:
+      - "${S3_PORT}:7070"
+    volumes:
+      - s3data:/data
+      - s3meta:/meta
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "${MAILPIT_SMTP_PORT}:1025"
+      - "${MAILPIT_UI_PORT}:8025"
+
+volumes:
+  pgdata:
+  redisdata:
+  s3data:
+  s3meta:
