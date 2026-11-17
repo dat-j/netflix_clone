@@ -2,6 +2,10 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import type {
+  AdminEpisode,
+  AdminEpisodeInput,
+  AdminSeason,
+  AdminSeasonInput,
   AdminStats,
   AdminTitle,
   AdminTitleInput,
@@ -19,8 +23,11 @@ import type {
   PlanInput,
   SourceFileDto,
   TranscodeJobDto,
+  MediaAssetDto,
+  ImageDto,
 } from "@app/shared";
 import { api } from "@/lib/api/client";
+import { anyEpisodeBusy } from "./series";
 
 export const qk = {
   me: ["auth", "me"] as const,
@@ -28,6 +35,7 @@ export const qk = {
   titles: (p: object) => ["admin", "titles", "list", p] as const,
   titlesAll: ["admin", "titles"] as const,
   title: (id: string) => ["admin", "titles", "detail", id] as const,
+  seasons: (id: string) => ["admin", "titles", "seasons", id] as const,
   genres: ["admin", "genres"] as const,
   sourceFiles: (p: object) => ["admin", "source-files", p] as const,
   sourceFilesAll: ["admin", "source-files"] as const,
@@ -78,6 +86,16 @@ export function useTitle(id: string) {
       );
       return busy ? 2500 : false;
     },
+  });
+}
+
+/** Mùa + tập của phim bộ; tự làm mới khi có tập đang transcode. */
+export function useSeasons(titleId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.seasons(titleId),
+    queryFn: () => api<AdminSeason[]>(`/admin/titles/${encodeURIComponent(titleId)}/seasons`),
+    enabled,
+    refetchInterval: (q) => (anyEpisodeBusy(q.state.data) ? 2500 : false),
   });
 }
 
@@ -154,6 +172,26 @@ export const adminApi = {
   publish: (id: string) => api<AdminTitle>(`/admin/titles/${id}/publish`, { method: "POST" }),
   unpublish: (id: string) => api<AdminTitle>(`/admin/titles/${id}/unpublish`, { method: "POST" }),
   syncTmdb: (id: string) => api<AdminTitle>(`/admin/titles/${id}/sync-tmdb`, { method: "POST" }),
+  createSeason: (titleId: string, b: AdminSeasonInput) => api<AdminSeason>(`/admin/titles/${titleId}/seasons`, { method: "POST", body: b }),
+  updateSeason: (id: string, b: Partial<AdminSeasonInput>) => api<AdminSeason>(`/admin/seasons/${id}`, { method: "PATCH", body: b }),
+  deleteSeason: (id: string) => api(`/admin/seasons/${id}`, { method: "DELETE" }),
+  createEpisode: (seasonId: string, b: AdminEpisodeInput) => api<AdminEpisode>(`/admin/seasons/${seasonId}/episodes`, { method: "POST", body: b }),
+  bulkEpisodes: (seasonId: string, count: number, startAt?: number) =>
+    api<AdminEpisode[]>(`/admin/seasons/${seasonId}/episodes/bulk`, { method: "POST", body: { count, ...(startAt ? { startAt } : {}) } }),
+  updateEpisode: (id: string, b: Partial<AdminEpisodeInput>) => api<AdminEpisode>(`/admin/episodes/${id}`, { method: "PATCH", body: b }),
+  deleteEpisode: (id: string) => api(`/admin/episodes/${id}`, { method: "DELETE" }),
+  attachEpisodeSource: (id: string, sourceFileId: string) => api<MediaAssetDto>(`/admin/episodes/${id}/assets`, { method: "POST", body: { sourceFileId } }),
+  publishEpisode: (id: string) => api<AdminEpisode>(`/admin/episodes/${id}/publish`, { method: "POST" }),
+  unpublishEpisode: (id: string) => api<AdminEpisode>(`/admin/episodes/${id}/unpublish`, { method: "POST" }),
+  uploadEpisodeStill: (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append("kind", "STILL");
+    fd.append("file", file);
+    return api<ImageDto>(`/admin/episodes/${id}/images`, { method: "POST", body: fd });
+  },
+  publishReady: (seasonId: string) => api<AdminEpisode[]>(`/admin/seasons/${seasonId}/publish-ready`, { method: "POST" }),
+  syncTmdbSeasons: (titleId: string, seasonNumbers?: number[]) =>
+    api<AdminSeason[]>(`/admin/titles/${titleId}/sync-tmdb-seasons`, { method: "POST", body: seasonNumbers?.length ? { seasonNumbers } : {} }),
   createPlan: (b: PlanInput) => api<PlanDto>("/admin/plans", { method: "POST", body: b }),
   updatePlan: (id: string, b: Partial<PlanInput>) => api<PlanDto>(`/admin/plans/${id}`, { method: "PATCH", body: b }),
   createHomeRow: (b: HomeRowInput) => api<HomeRowDto>("/admin/home-rows", { method: "POST", body: b }),

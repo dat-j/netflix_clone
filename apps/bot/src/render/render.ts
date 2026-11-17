@@ -379,3 +379,160 @@ export async function renderThumb(poster: Buffer | null, name: string): Promise<
   const art = poster ?? (await placeholderArt(name, 200, 300));
   return sharp(art).resize(200, 300, { fit: "cover" }).jpeg({ quality: 80 }).toBuffer();
 }
+
+// ───────── series: episode picker + episode card ─────────
+
+export interface EpisodeTile {
+  number: number;
+  name: string | null;
+  meta: string | null;
+  still: Buffer | null;
+  playable: boolean;
+}
+
+/** Dimmed series backdrop used for episodes without a still (cached per input buffer). */
+async function fallbackStill(backdrop: Buffer | null, seriesName: string, w: number, h: number): Promise<Buffer> {
+  if (!backdrop) return placeholderArt(seriesName, w, h, false);
+  return sharp(backdrop).resize(w, h, { fit: "cover", position: "attention" }).modulate({ brightness: 0.45, saturation: 0.6 }).blur(3).png().toBuffer();
+}
+
+/**
+ * "Chọn tập" screen: 3-column grid of 16:9 episode stills (falls back to the dimmed series backdrop + big number),
+ * header with brand, series name and season/page chips. Mirrors the 3-per-row episode buttons under the photo.
+ */
+export async function renderEpisodeGrid(o: {
+  seriesName: string;
+  seasonLabel: string;
+  pageLabel: string | null;
+  backdrop: Buffer | null;
+  tiles: EpisodeTile[];
+}): Promise<Buffer> {
+  const W = 1080, M = 36, GAP = 24, COLS = 3;
+  const HEADER = 176;
+  const cellW = Math.floor((W - M * 2 - GAP * (COLS - 1)) / COLS);
+  const stillH = Math.round((cellW * 9) / 16);
+  const TEXT_H = 96;
+  const rowH = stillH + TEXT_H;
+  const rows = Math.max(1, Math.ceil(o.tiles.length / COLS));
+  const H = HEADER + rows * rowH + (rows - 1) * GAP + M - 12;
+
+  const backdropBase = o.backdrop
+    ? await sharp(o.backdrop).resize(W, H, { fit: "cover", position: "top" }).blur(30).modulate({ brightness: 0.35 }).toBuffer()
+    : null;
+  const bg = svg(W, H,
+    `<defs><linearGradient id="b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e1e1e" stop-opacity="${backdropBase ? 0.55 : 1}"/><stop offset="0.35" stop-color="${BG}" stop-opacity="${backdropBase ? 0.85 : 1}"/><stop offset="1" stop-color="${BG}"/></linearGradient>` +
+    `<radialGradient id="r" cx="0.0" cy="0.0" r="0.6"><stop offset="0" stop-color="${BRAND}" stop-opacity="0.22"/><stop offset="1" stop-color="${BRAND}" stop-opacity="0"/></radialGradient></defs>` +
+    `<rect width="${W}" height="${H}" fill="url(#b)"/><rect width="${W}" height="${H}" fill="url(#r)"/>` +
+    `<rect x="${M}" y="${HEADER - 22}" width="${W - M * 2}" height="2" fill="#ffffff" fill-opacity="0.08"/>`);
+  const base = backdropBase ? await sharp(backdropBase).composite([{ input: bg }]).png().toBuffer() : bg;
+
+  const ops: OverlayOptions[] = [];
+  const mark = await brandMark(44);
+  ops.push({ input: mark.buf, left: M, top: 28 });
+  const pick = await text("CHỌN TẬP", { size: 24, bold: true, color: BRAND_2, maxWidth: 400, letterSpacing: 2 });
+  ops.push({ input: pick.buf, left: W - M - pick.width, top: 28 + Math.round((44 - pick.height) / 2) });
+  const chipsRight: RenderedText[] = [];
+  chipsRight.push(await chip(o.seasonLabel, { size: 26, bg: BRAND }));
+  if (o.pageLabel) chipsRight.push(await chip(o.pageLabel, { size: 26, bg: "rgba(255,255,255,0.12)" }));
+  const chipsW = chipsRight.reduce((n, c) => n + c.width, 0) + 12 * (chipsRight.length - 1);
+  const nameT = await text(o.seriesName, { size: 40, bold: true, maxWidth: W - M * 2 - chipsW - 32 });
+  const rowY = 96;
+  ops.push({ input: nameT.buf, left: M, top: rowY + Math.round((50 - nameT.height) / 2) });
+  let cx = W - M - chipsW;
+  for (const c of chipsRight) {
+    ops.push({ input: c.buf, left: cx, top: rowY + Math.round((50 - c.height) / 2) });
+    cx += c.width + 12;
+  }
+
+  let fallback: Buffer | null = null;
+  for (let i = 0; i < o.tiles.length; i++) {
+    const t = o.tiles[i]!;
+    const col = i % COLS, row = Math.floor(i / COLS);
+    const x = M + col * (cellW + GAP);
+    const y = HEADER + row * (rowH + GAP);
+    let art = t.still;
+    if (!art) fallback ??= await fallbackStill(o.backdrop, o.seriesName, cellW, stillH);
+    ops.push({ input: shadow(cellW, stillH, 16, 14, 0.55), left: x - 28, top: y - 28 });
+    ops.push({ input: await roundedCover(art ?? fallback!, cellW, stillH, 16, "attention"), left: x, top: y });
+    // scrim for the number badge / status chip
+    ops.push({ input: svg(cellW, stillH,
+      `<defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0.45" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.7"/></linearGradient></defs>` +
+      `<rect width="${cellW}" height="${stillH}" rx="16" fill="url(#s)"/>` +
+      (t.playable ? "" : `<rect width="${cellW}" height="${stillH}" rx="16" fill="#000" fill-opacity="0.45"/>`)), left: x, top: y });
+    if (!art) {
+      const big = await text(String(t.number), { size: 72, bold: true, color: "#ffffff", maxWidth: cellW });
+      ops.push({ input: big.buf, left: x + Math.round((cellW - big.width) / 2), top: y + Math.round((stillH - big.height) / 2) - 6 });
+    }
+    if (art) {
+      // the fallback tile already shows the big number; a still needs the badge
+      const badge = await chip(`Tập ${t.number}`, { size: 22, bg: BRAND });
+      ops.push({ input: badge.buf, left: x + 12, top: y + stillH - badge.height - 12 });
+    }
+    if (t.playable) {
+      const play = svg(44, 44, `<circle cx="22" cy="22" r="21" fill="#000" fill-opacity="0.55" stroke="#fff" stroke-opacity="0.8" stroke-width="2"/><path d="M17 13l14 9-14 9z" fill="#fff"/>`);
+      ops.push({ input: play, left: x + cellW - 44 - 12, top: y + stillH - 44 - 12 });
+    } else {
+      const soon = await chip("Sắp có", { size: 20, bg: "rgba(0,0,0,0.6)", border: "rgba(255,255,255,0.55)" });
+      ops.push({ input: soon.buf, left: x + cellW - soon.width - 12, top: y + stillH - soon.height - 12 });
+    }
+    const name = await text(t.name?.trim() || `Tập ${t.number}`, { size: 26, bold: true, maxWidth: cellW - 4, color: t.playable ? "#ffffff" : "#9a9a9a" });
+    ops.push({ input: name.buf, left: x + 2, top: y + stillH + 14 });
+    if (t.meta) {
+      const meta = await text(t.meta, { size: 22, maxWidth: cellW - 4, color: "#a0a0a0" });
+      ops.push({ input: meta.buf, left: x + 2, top: y + stillH + 14 + name.height + 6 });
+    }
+  }
+  return sharp(base).composite(ops).flatten({ background: BG }).jpeg(JPEG).toBuffer();
+}
+
+/** 1280×720 episode card: still (or series backdrop) full-bleed, series name, "Mùa X · Tập Y", episode title, chips. */
+export async function renderEpisode(o: {
+  seriesName: string;
+  code: string;
+  name: string | null;
+  still: Buffer | null;
+  backdrop: Buffer | null;
+  chips: string[];
+  playable: boolean;
+  overview?: string | null;
+}): Promise<Buffer> {
+  const W = 1280, H = 720;
+  const src = o.still ?? o.backdrop;
+  const base = src
+    ? await sharp(src).resize(W, H, { fit: "cover", position: "attention" }).modulate({ brightness: o.still ? 0.95 : 0.7 }).toBuffer()
+    : await placeholderArt(o.seriesName, W, H, false);
+  const scrim = svg(W, H,
+    `<defs><linearGradient id="l" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0b0b0b" stop-opacity="0.95"/><stop offset="0.55" stop-color="#0b0b0b" stop-opacity="0.6"/><stop offset="1" stop-color="#0b0b0b" stop-opacity="0.05"/></linearGradient>` +
+    `<linearGradient id="b" x1="0" y1="0" x2="0" y2="1"><stop offset="0.45" stop-color="${BG}" stop-opacity="0"/><stop offset="1" stop-color="${BG}" stop-opacity="0.95"/></linearGradient></defs>` +
+    `<rect width="${W}" height="${H}" fill="url(#l)"/><rect width="${W}" height="${H}" fill="url(#b)"/>`);
+  const ops: OverlayOptions[] = [{ input: scrim, left: 0, top: 0 }];
+  const X = 72, TW = 760;
+  const mark = await brandMark(40);
+  ops.push({ input: mark.buf, left: W - 56 - mark.width, top: 40 });
+
+  const blocks: { buf: Buffer; height: number; width: number; gap: number }[] = [];
+  const series = await text(o.seriesName.toUpperCase(), { size: 26, bold: true, color: "#d0d0d0", maxWidth: TW, letterSpacing: 2 });
+  blocks.push({ ...series, gap: 18 });
+  const code = await chip(o.code, { size: 28, bg: BRAND });
+  blocks.push({ ...code, gap: 20 });
+  if (o.name) {
+    const name = await text(o.name, { size: 56, bold: true, maxWidth: TW, maxLines: 2 });
+    blocks.push({ ...name, gap: 26 });
+  }
+  if (o.overview) {
+    const ov = await text(o.overview, { size: 26, color: "#cfcfcf", maxWidth: TW - 40, maxLines: 3 });
+    blocks.push({ ...ov, gap: 28 });
+  }
+  const CHIP_ROW = 52;
+  const total = blocks.reduce((n, b) => n + b.height + b.gap, 0) + CHIP_ROW;
+  let y = Math.max(110, H - 72 - total);
+  for (const b of blocks) {
+    ops.push({ input: b.buf, left: X, top: y });
+    y += b.height + b.gap;
+  }
+  ops.push(...(await chipRow([
+    ...(o.playable ? [{ label: "▶ Xem được ngay", style: "ok" as const }] : [{ label: "Sắp ra mắt", style: "outline" as const }]),
+    ...o.chips.map((label) => ({ label, style: "plain" as const })),
+  ], X, y, 26, TW)));
+  return sharp(base).composite(ops).flatten({ background: BG }).jpeg(JPEG).toBuffer();
+}

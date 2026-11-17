@@ -26,7 +26,7 @@ import { parseMediaPlaylist } from "../pipeline/hls.js";
 const PROTO = ["-allowed_extensions", "ALL", "-protocol_whitelist", "file,crypto,data"];
 
 async function verify(assetId: string): Promise<boolean> {
-  const a = await db().mediaAsset.findUnique({ where: { id: assetId }, include: { renditions: true, sourceFile: true, subtitleTracks: true } });
+  const a = await db().mediaAsset.findUnique({ where: { id: assetId }, include: { renditions: true, sourceFile: true, subtitleTracks: true, audioTracks: true } });
   if (!a) throw new Error(`asset ${assetId} not found`);
   if (a.status !== "READY" || !a.encKeyCipher || !a.encKeyIv || !a.encKeyTag || !a.hlsIv) throw new Error(`asset ${assetId} is ${a.status}, not READY with a key`);
   const dir = await mkdtemp(join(env().workDir, "verify-"));
@@ -109,6 +109,39 @@ async function verify(assetId: string): Promise<boolean> {
           `(Δsrc ${src === null ? "?" : (framesSec - src).toFixed(2)}s)  decodeErrors=${decodeErrors.length}  ${((Date.now() - t) / 1000).toFixed(1)}s  ${ok ? "OK" : "FAIL"}`,
       );
     }
+    // separate audio renditions (EXT-X-MEDIA TYPE=AUDIO): same two decode paths, audio only
+    const iv = Buffer.from(a.hlsIv, "hex");
+    for (const t of a.audioTracks.filter((x) => x.playlistKey).sort((x, y) => x.playlistKey!.localeCompare(y.playlistKey!))) {
+      const name = t.playlistKey!.slice(prefix.length).split("/")[0]!;
+      if (!new RegExp(`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",[^\n]*URI="${name}/index\\.m3u8"`).test(master)) problems.push(`${name} missing from master`);
+      const text = await readFile(join(dir, name, "index.m3u8"), "utf8");
+      if (!text.includes(`URI="${HLS_KEY_URI_PLACEHOLDER}",IV=0x${a.hlsIv}`)) problems.push(`${name}: unexpected EXT-X-KEY`);
+      const local = join(dir, name, "local.m3u8");
+      await writeFile(local, text.replace(`URI="${HLS_KEY_URI_PLACEHOLDER}"`, `URI="${keyPath}"`));
+      const countAudio = async (args: string[]) => {
+        const r = await runProcess(ffprobePath(), ["-v", "error", ...args, "-count_frames", "-print_format", "json", "-show_streams", "-show_format"], { captureStdout: true, timeoutMs: 600_000 });
+        const j = JSON.parse(r.stdout) as { streams: Array<{ codec_type: string; codec_name: string; channels?: number; sample_rate?: string; nb_read_frames?: string }>; format: { duration?: string } };
+        return { s: j.streams.find((x) => x.codec_type === "audio"), video: j.streams.some((x) => x.codec_type === "video"), dur: Number(j.format.duration), errors: r.stderrTail };
+      };
+      const viaHls = await countAudio([...PROTO, local]);
+      const plain = join(dir, name, "decrypted.ts");
+      for (const seg of parseMediaPlaylist(text)) {
+        const d = createDecipheriv("aes-128-cbc", key, iv);
+        await appendFile(plain, Buffer.concat([d.update(await readFile(join(dir, name, seg.uri))), d.final()]));
+      }
+      const viaPlain = await countAudio([plain]);
+      const hlsFrames = Number(viaHls.s?.nb_read_frames ?? 0);
+      const plainFrames = Number(viaPlain.s?.nb_read_frames ?? 0);
+      // AAC-LC: 1024 samples per frame
+      const sec = viaHls.s?.sample_rate ? (hlsFrames * 1024) / Number(viaHls.s.sample_rate) : 0;
+      const ok = !viaHls.video && viaHls.s?.codec_name === "aac" && viaHls.s.channels === 2 && hlsFrames > 0 && hlsFrames === plainFrames &&
+        viaHls.errors.length === 0 && viaPlain.errors.length === 0 && (src === null || Math.abs(sec - src) < 0.5);
+      if (!ok) problems.push(`${name}: hlsFrames=${hlsFrames} plainFrames=${plainFrames} codec=${viaHls.s?.codec_name}/${viaHls.s?.channels}ch errors=${[...viaHls.errors, ...viaPlain.errors].slice(0, 2).join(" | ")}`);
+      console.log(
+        `  ${name.padEnd(12)} lang=${t.language} label="${t.label}"${t.isDefault ? " DEFAULT" : ""}  ${viaHls.s?.codec_name} ${viaHls.s?.channels}ch ${viaHls.s?.sample_rate}Hz  ` +
+          `frames(hls+aes)=${hlsFrames} frames(self-decrypted)=${plainFrames} → ${sec.toFixed(2)}s (Δsrc ${src === null ? "?" : (sec - src).toFixed(2)}s)  ${ok ? "OK" : "FAIL"}`,
+      );
+    }
     // thumbnails + poster + subs
     const vtt = await readFile(join(dir, "thumbs", "thumbs.vtt"), "utf8");
     const sprites = new Set((await readdir(join(dir, "thumbs"))).filter((f) => f.endsWith(".jpg")));
@@ -119,7 +152,16 @@ async function verify(assetId: string): Promise<boolean> {
     if (!poster) problems.push("poster.jpg missing");
     const leaked = keys.filter((k) => /\.key$|keyinfo/i.test(k));
     if (leaked.length) problems.push(`key material in bucket: ${leaked.join(",")}`);
-    for (const s of a.subtitleTracks) if (!keys.includes(s.key)) problems.push(`subtitle ${s.key} missing`);
+    for (const s of a.subtitleTracks) {
+      if (!keys.includes(s.key)) {
+        problems.push(`subtitle ${s.key} missing`);
+        continue;
+      }
+      const vttText = await readFile(join(dir, s.key.slice(prefix.length)), "utf8");
+      const cues = (vttText.match(/-->/g) ?? []).length;
+      if (!vttText.startsWith("WEBVTT") || !cues) problems.push(`subtitle ${s.key}: not a WebVTT file with cues`);
+      console.log(`  subtitle ${s.key.slice(prefix.length)} lang=${s.language} label="${s.label}" default=${s.isDefault} forced=${s.isForced} cues=${cues}`);
+    }
     console.log(`  thumbs: ${refs.length} cues over ${sprites.size} sprite sheet(s); poster: ${poster ? "yes" : "NO"}; subtitles: ${a.subtitleTracks.length}; key files in bucket: ${leaked.length}`);
     console.log(problems.length ? `  RESULT: FAIL\n    - ${problems.join("\n    - ")}` : "  RESULT: PLAYABLE");
     return problems.length === 0;

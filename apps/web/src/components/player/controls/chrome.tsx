@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { usePlayer } from "../controller";
@@ -19,6 +18,7 @@ import {
   PlayIcon,
 } from "./icons";
 import { AudioSubtitleMenu, QualityMenu, SpeedMenu } from "./menus";
+import { EpisodesMenu } from "./episodes-menu";
 import { Scrubber } from "./scrubber";
 import { VolumeControl } from "./volume";
 
@@ -82,15 +82,26 @@ function TitleLabel({ className }: { className?: string }) {
   const name = session?.title.name ?? detail?.name ?? "";
   const ep = episodeLabel(session?.episode ?? null);
   return (
-    <p className={cn("min-w-0 truncate text-center text-white", className)} data-testid="player-title">
+    <p className={cn("min-w-0 truncate text-center text-white", className)} data-testid="player-title" title={ep ? `${name} — ${ep}` : name}>
       <span className="font-bold">{name}</span>
-      {ep && <span className="ml-3 font-normal text-white/80">{ep}</span>}
+      {ep && <span className="ml-3 font-normal text-white/80" data-testid="player-episode">{ep}</span>}
     </p>
   );
 }
 
+function NextEpisodeButton({ className }: { className?: string }) {
+  const { nextEpisode, playNext } = usePlayer();
+  if (!nextEpisode) return null;
+  return (
+    <ControlButton label={`Tập tiếp theo: ${episodeLabel(nextEpisode)} (N)`} onClick={playNext} data-testid="next-episode-button" className={className}>
+      <NextEpisodeIcon />
+    </ControlButton>
+  );
+}
+
 export function BottomBar() {
-  const { seekBy, toggleFullscreen, togglePip, canPip, canFullscreen, touch, nextEpisodeHref } = usePlayer();
+  const { seekBy, toggleFullscreen, togglePip, canPip, canFullscreen, touch, session } = usePlayer();
+  const series = session?.title.type === "SERIES";
   const visible = useChromeVisible();
   const fullscreen = usePlayerStore((s) => s.fullscreen);
   const pip = usePlayerStore((s) => s.pip);
@@ -121,11 +132,8 @@ export function BottomBar() {
           <SpeedMenu />
           <AudioSubtitleMenu />
           <QualityMenu />
-          {nextEpisodeHref && (
-            <Link href={nextEpisodeHref} aria-label="Tập tiếp theo" className="grid size-11 place-items-center text-white [&>svg]:size-7">
-              <NextEpisodeIcon />
-            </Link>
-          )}
+          {series && <EpisodesMenu />}
+          <NextEpisodeButton />
           {canFullscreen && (
             <ControlButton label={fullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"} onClick={toggleFullscreen}>
               {fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
@@ -146,16 +154,8 @@ export function BottomBar() {
           </div>
           <TitleLabel className="flex-1 px-2 text-base md:px-4 md:text-lg lg:text-xl" />
           <div className="flex items-center gap-1 md:gap-3 lg:gap-5">
-            {nextEpisodeHref && (
-              <Link
-                href={nextEpisodeHref}
-                aria-label="Tập tiếp theo"
-                title="Tập tiếp theo"
-                className="grid size-11 place-items-center rounded-full text-white transition-transform hover:scale-[1.18] lg:size-12 [&>svg]:size-7 lg:[&>svg]:size-8"
-              >
-                <NextEpisodeIcon />
-              </Link>
-            )}
+            <NextEpisodeButton />
+            {series && <EpisodesMenu />}
             <AudioSubtitleMenu />
             <SpeedMenu />
             <QualityMenu />

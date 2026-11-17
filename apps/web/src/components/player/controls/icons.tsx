@@ -116,3 +116,12 @@ export const CheckIcon = (p: P) => (
     <path d="M4.5 12.5l5 5 10-11" />
   </svg>
 );
+
+/** Stacked cards: "Các tập" panel */
+export const EpisodesIcon = (p: P) => (
+  <svg {...base(p)}>
+    <rect x="2" y="8" width="15" height="12" rx="1.6" />
+    <path d="M5 5.3c0-.5.4-.8.8-.8h13.4c.9 0 1.6.7 1.6 1.6v9.6c0 .4-.4.8-.8.8s-.8-.4-.8-.8V6.1H5.8c-.4 0-.8-.4-.8-.8z" />
+    <path d="M8 2.3c0-.4.4-.8.8-.8h12.6C22.8 1.5 24 2.7 24 4v9.6c0 .4-.4.8-.8.8s-.8-.4-.8-.8V4c0-.5-.3-.9-.8-.9H8.8c-.4 0-.8-.4-.8-.8z" opacity=".55" />
+  </svg>
+);

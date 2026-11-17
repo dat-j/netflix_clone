@@ -2,9 +2,10 @@
 
 import { createContext, useContext } from "react";
 import { createStore, useStore, type StoreApi } from "zustand";
+import { initialNextUp, nextUpReducer, type NextUpAction, type NextUpState } from "./lib/series";
 import { initialPlayerState, playerReducer, type PlayerAction, type PlayerState } from "./lib/state";
 
-export type MenuId = "audio" | "speed" | "quality" | "volume" | null;
+export type MenuId = "audio" | "speed" | "quality" | "volume" | "episodes" | null;
 
 export type FeedbackKind = "play" | "pause" | "back" | "forward" | "volume" | "mute";
 
@@ -25,19 +26,22 @@ interface UiSlice {
   pip: boolean;
   /** Seconds accumulated by consecutive double-tap seeks (shown in the ripple) */
   seekStreak: number;
-  /** Current subtitle language (null = off) */
-  subtitleLang: string | null;
+  /** Chosen (non-forced) subtitle track id, null = off (a forced track may still render) */
+  subtitleId: string | null;
+  /** Series: "Tập tiếp theo" card / countdown */
+  nextUp: NextUpState;
 }
 
 export interface PlayerStoreState extends PlayerState, UiSlice {
   dispatch: (action: PlayerAction) => void;
   setUi: (patch: Partial<UiSlice>) => void;
   pushFeedback: (f: Omit<Feedback, "id">) => void;
+  nextUpDispatch: (action: NextUpAction) => void;
 }
 
 let feedbackSeq = 0;
 
-export function createPlayerStore(prefs?: Partial<Pick<PlayerState, "volume" | "muted" | "rate">> & { subtitleLang?: string | null }) {
+export function createPlayerStore(prefs?: Partial<Pick<PlayerState, "volume" | "muted" | "rate">>) {
   return createStore<PlayerStoreState>((set) => ({
     ...initialPlayerState(prefs),
     chromeVisible: true,
@@ -46,7 +50,8 @@ export function createPlayerStore(prefs?: Partial<Pick<PlayerState, "volume" | "
     fullscreen: false,
     pip: false,
     seekStreak: 0,
-    subtitleLang: prefs?.subtitleLang ?? null,
+    subtitleId: null,
+    nextUp: initialNextUp,
     dispatch: (action) =>
       set((s) => {
         const next = playerReducer(s, action);
@@ -54,6 +59,11 @@ export function createPlayerStore(prefs?: Partial<Pick<PlayerState, "volume" | "
       }),
     setUi: (patch) => set(patch),
     pushFeedback: (f) => set({ feedback: { ...f, id: ++feedbackSeq } }),
+    nextUpDispatch: (action) =>
+      set((s) => {
+        const next = nextUpReducer(s.nextUp, action);
+        return next === s.nextUp ? s : { nextUp: next };
+      }),
   }));
 }
 

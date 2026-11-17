@@ -57,6 +57,8 @@ export interface PlayerState {
 
 export type PlayerAction =
   | { type: "LOAD" }
+  /** Another episode is about to load into the same <video>: forget everything media-specific, keep volume/rate */
+  | { type: "RESET_MEDIA" }
   | { type: "LOADED_METADATA"; duration: number }
   | { type: "PLAY" }
   | { type: "PLAYING" }
@@ -105,12 +107,14 @@ const finite = (n: number, fallback = 0) => (Number.isFinite(n) && n >= 0 ? n : 
 
 export function playerReducer(state: PlayerState, action: PlayerAction): PlayerState {
   // A fatal error freezes the machine until LOAD/RECOVERED
-  if (state.phase === "error" && action.type !== "LOAD" && action.type !== "RECOVERED" && action.type !== "FATAL") {
+  if (state.phase === "error" && action.type !== "LOAD" && action.type !== "RECOVERED" && action.type !== "FATAL" && action.type !== "RESET_MEDIA") {
     return state;
   }
   switch (action.type) {
     case "LOAD":
       return { ...state, phase: "loading", buffering: false, fatal: null };
+    case "RESET_MEDIA":
+      return initialPlayerState({ volume: state.volume, muted: state.muted, rate: state.rate });
     case "LOADED_METADATA":
       return { ...state, duration: finite(action.duration, state.duration) };
     case "DURATION":

@@ -1,10 +1,11 @@
 "use client";
 
-import type { CreditDto, SeasonDto, TitleCard, TitleDetail } from "@app/shared";
+import type { CreditDto, EpisodeDto, SeasonDto, TitleCard, TitleDetail } from "@app/shared";
 import { Check, ChevronDown, Play, Plus, Volume2, VolumeX, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { DropdownMenu } from "radix-ui";
 import { useEffect, useState } from "react";
 import { PreviewVideo } from "@/components/browse/preview-video";
 import { ErrorPanel } from "@/components/browse/state-panels";
@@ -12,9 +13,10 @@ import { Artwork } from "@/components/ui/artwork";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip } from "@/components/ui/tooltip";
 import { recallCard, rememberCard, titleHref } from "@/lib/card-cache";
-import { useSimilar, useTitle, useToggleMyList } from "@/lib/queries";
+import { episodeCode, episodeLabel, episodeName } from "@/lib/episodes";
+import { useSeasonEpisodes, useSimilar, useTitle, useToggleMyList } from "@/lib/queries";
 import { useUI } from "@/lib/ui-store";
-import { cn, formatRemaining, formatRuntime, qualityLabel } from "@/lib/utils";
+import { cn, formatDate, formatRemaining, formatRuntime, qualityLabel } from "@/lib/utils";
 import { MatchScore, MaturityBadge, MyListButton, PlayButton, QualityBadge, RateButton, watchHref } from "./title-actions";
 
 interface DetailViewProps {
@@ -106,8 +108,8 @@ export function DetailView({ idOrSlug, mode, onClose, TitleTag = "h1" }: DetailV
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[0.95rem] text-white/80">
               <MatchScore score={t.matchScore} />
               {t.year && <span>{t.year}</span>}
-              {t.type === "SERIES" && t.seasons?.length ? (
-                <span>{t.seasons.length > 1 ? `${t.seasons.length} mùa` : `${t.seasons[0].episodes.length} tập`}</span>
+              {t.type === "SERIES" && (t.seasonCount || t.seasons?.length) ? (
+                <span>{seriesLength(t)}</span>
               ) : (
                 formatRuntime(t.runtimeMinutes) && <span>{formatRuntime(t.runtimeMinutes)}</span>
               )}
@@ -118,7 +120,12 @@ export function DetailView({ idOrSlug, mode, onClose, TitleTag = "h1" }: DetailV
               {t.genres.length > 0 && <span className="text-white/80">{t.genres.slice(0, 3).join(", ")}</span>}
             </div>
             {progress && (
-              <div className="flex max-w-md items-center gap-3 text-sm text-white/80">
+              <div className="flex max-w-md flex-wrap items-center gap-x-3 gap-y-1 text-sm text-white/80">
+                {t.type === "SERIES" && t.resumeEpisode && t.resumeEpisode.id === progress.episodeId ? (
+                  <span className="w-full font-semibold text-white" data-testid="detail-resume-episode">
+                    {episodeLabel(t.resumeEpisode)}
+                  </span>
+                ) : null}
                 <div className="h-[3px] flex-1 bg-white/25">
                   <div className="h-full bg-brand" style={{ width: `${Math.max(3, progress.ratio * 100)}%` }} />
                 </div>
@@ -150,6 +157,12 @@ export function DetailView({ idOrSlug, mode, onClose, TitleTag = "h1" }: DetailV
       </div>
     </article>
   );
+}
+
+function seriesLength(t: TitleDetail): string {
+  const seasons = t.seasonCount || t.seasons?.length || 0;
+  const episodes = t.episodeCount || t.seasons?.reduce((n, s) => n + (s.episodeCount ?? s.episodes.length), 0) || 0;
+  return seasons > 1 ? `${seasons} mùa` : `${episodes} tập`;
 }
 
 function CloseButton({ onClose }: { onClose: () => void }) {
@@ -202,83 +215,160 @@ function MetaLine({ label, values }: { label: string; values?: string[] }) {
 }
 
 function Episodes({ title, seasons }: { title: TitleDetail; seasons: SeasonDto[] }) {
-  const initialSeason = seasons.find((s) => s.episodes.some((e) => e.id === title.progress?.episodeId))?.id ?? seasons[0].id;
-  const [seasonId, setSeasonId] = useState(initialSeason);
-  const season = seasons.find((s) => s.id === seasonId) ?? seasons[0];
+  const sorted = [...seasons].sort((a, b) => a.seasonNumber - b.seasonNumber);
+  const initialSeason =
+    title.resumeEpisode?.seasonNumber ??
+    sorted.find((s) => s.episodes.some((e) => e.id === title.progress?.episodeId))?.seasonNumber ??
+    sorted.find((s) => s.episodes.length > 0)?.seasonNumber ??
+    sorted[0].seasonNumber;
+  const [seasonNumber, setSeasonNumber] = useState(initialSeason);
+  const season = sorted.find((s) => s.seasonNumber === seasonNumber) ?? sorted[0];
+  const q = useSeasonEpisodes(title.id, season);
+  const episodes = q.data?.episodes ?? [];
+  const seasonLabel = (s: SeasonDto) => s.name?.trim() || `Mùa ${s.seasonNumber}`;
+  const highlightId = title.resumeEpisode?.id ?? title.progress?.episodeId ?? null;
 
   return (
-    <section className="mt-10" aria-labelledby="episodes-heading">
-      <div className="mb-4 flex items-center justify-between gap-4">
+    <section className="mt-10" aria-labelledby="episodes-heading" data-testid="episodes">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <h2 id="episodes-heading" className="text-2xl font-bold">
-          Tập
+          Các tập
         </h2>
-        {seasons.length > 1 ? (
-          <select
-            value={seasonId}
-            onChange={(e) => setSeasonId(e.target.value)}
-            aria-label="Chọn mùa"
-            className="h-10 rounded border border-white/40 bg-[#242424] px-3 text-base font-semibold text-white"
-          >
-            {seasons.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name ?? `Mùa ${s.seasonNumber}`} ({s.episodes.length} tập)
-              </option>
-            ))}
-          </select>
+        {sorted.length > 1 ? (
+          <DropdownMenu.Root modal={false}>
+            <DropdownMenu.Trigger
+              data-testid="season-select"
+              aria-label={`Chọn mùa, đang chọn ${seasonLabel(season)}`}
+              className="inline-flex h-11 min-w-36 items-center justify-between gap-3 rounded border border-white/40 bg-[#242424] px-4 text-base font-bold text-white outline-none hover:bg-[#2f2f2f] focus-visible:ring-2 focus-visible:ring-white data-[state=open]:bg-[#2f2f2f]"
+            >
+              {seasonLabel(season)}
+              <ChevronDown className="size-5" />
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={4}
+                className="z-[90] max-h-[min(60vh,420px)] min-w-56 overflow-y-auto rounded border border-white/15 bg-[#242424] py-1 text-white shadow-2xl data-[state=open]:animate-fade-in"
+              >
+                {sorted.map((s) => (
+                  <DropdownMenu.Item
+                    key={s.id}
+                    onSelect={() => setSeasonNumber(s.seasonNumber)}
+                    data-testid={`season-option-${s.seasonNumber}`}
+                    className={cn(
+                      "flex cursor-pointer items-baseline justify-between gap-6 px-4 py-2.5 text-base outline-none data-[highlighted]:bg-white/10",
+                      s.seasonNumber === season.seasonNumber && "font-bold",
+                    )}
+                  >
+                    <span>{seasonLabel(s)}</span>
+                    <span className="text-sm font-normal text-white/60">{s.episodeCount} tập</span>
+                  </DropdownMenu.Item>
+                ))}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         ) : (
-          <span className="text-white/70">{season.name ?? `Mùa ${season.seasonNumber}`}</span>
+          <span className="text-lg font-semibold text-white/80">{seasonLabel(season)}</span>
         )}
       </div>
-      <ol className="divide-y divide-white/10 border-y border-white/10">
-        {season.episodes.map((ep) => {
-          const current = title.progress?.episodeId === ep.id;
-          const inner = (
-            <>
-              <span className="w-6 shrink-0 text-center text-xl text-white/60 md:w-10 md:text-2xl">{ep.episodeNumber}</span>
-              <div className="relative aspect-video w-28 shrink-0 overflow-hidden rounded md:w-36">
-                <Artwork image={ep.still ?? title.backdrop} alt="" sizes="150px" quality={60} />
-                {ep.playable && (
-                  <span className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover/ep:opacity-100">
-                    <span className="flex size-10 items-center justify-center rounded-full border-2 border-white bg-black/50">
-                      <Play className="size-5 translate-x-px fill-white" />
-                    </span>
-                  </span>
-                )}
-                {ep.progress && !ep.progress.completed && (
-                  <div className="absolute inset-x-0 bottom-0 h-1 bg-white/30">
-                    <div className="h-full bg-brand" style={{ width: `${ep.progress.ratio * 100}%` }} />
-                  </div>
-                )}
+      {season.overview ? <p className="mb-4 max-w-3xl text-sm text-white/70">{season.overview}</p> : null}
+      {q.isPending ? (
+        <ol className="divide-y divide-white/10 border-y border-white/10" aria-busy aria-label="Đang tải danh sách tập">
+          {Array.from({ length: Math.min(4, Math.max(1, season.episodeCount)) }, (_, i) => (
+            <li key={i} className="flex items-center gap-3 px-2 py-4 md:gap-5 md:px-4">
+              <Skeleton className="h-6 w-6 md:w-10" />
+              <Skeleton className="aspect-video w-28 rounded md:w-36" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-1/3" />
+                <Skeleton className="h-3 w-4/5" />
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline justify-between gap-3">
-                  <h3 className="truncate font-semibold">{ep.name ?? `Tập ${ep.episodeNumber}`}</h3>
-                  {ep.runtimeMinutes ? <span className="shrink-0 text-sm text-white/70">{ep.runtimeMinutes} phút</span> : null}
-                </div>
-                {ep.overview && <p className="mt-1 line-clamp-3 text-sm text-white/70 max-sm:hidden">{ep.overview}</p>}
-                {!ep.playable && <p className="mt-1 text-xs text-white/50">Sắp ra mắt</p>}
-              </div>
-            </>
-          );
-          const cls = cn(
-            "group/ep flex items-center gap-3 rounded px-2 py-4 md:gap-5 md:px-4",
-            current && "bg-[#333]",
-            ep.playable && "hover:bg-[#2a2a2a]",
-          );
-          return (
-            <li key={ep.id}>
-              {ep.playable ? (
-                <Link href={watchHref(title, ep.id)} className={cls}>
-                  {inner}
-                </Link>
-              ) : (
-                <div className={cn(cls, "opacity-60")}>{inner}</div>
-              )}
             </li>
-          );
-        })}
-      </ol>
+          ))}
+        </ol>
+      ) : q.isError ? (
+        <div className="rounded border border-white/10 px-4 py-6 text-center text-white/70">
+          Không tải được danh sách tập.{" "}
+          <button type="button" onClick={() => void q.refetch()} className="font-semibold text-white underline">
+            Thử lại
+          </button>
+        </div>
+      ) : episodes.length === 0 ? (
+        <p className="rounded border border-white/10 px-4 py-6 text-center text-white/60">Mùa này chưa có tập nào.</p>
+      ) : (
+        <ol className="divide-y divide-white/10 border-y border-white/10" data-testid="episode-list">
+          {episodes.map((ep) => (
+            <EpisodeRow key={ep.id} title={title} ep={ep} highlighted={ep.id === highlightId} />
+          ))}
+        </ol>
+      )}
     </section>
+  );
+}
+
+function EpisodeRow({ title, ep, highlighted }: { title: TitleDetail; ep: EpisodeDto; highlighted: boolean }) {
+  const progress = ep.progress ? (ep.progress.completed ? 1 : ep.progress.ratio) : null;
+  const remaining = ep.progress && !ep.progress.completed ? formatRemaining(ep.progress.positionSec, ep.progress.durationSec) : null;
+  const air = !ep.playable && ep.airDate ? formatDate(ep.airDate, { day: "numeric", month: "numeric", year: "numeric" }) : null;
+  const badge = !ep.playable ? (
+    <p className="mt-1 inline-flex items-center gap-1.5 rounded-sm bg-white/10 px-1.5 py-0.5 text-xs font-medium text-white/70">{air ? `Ra mắt ${air}` : "Sắp ra mắt"}</p>
+  ) : null;
+  const inner = (
+    <>
+      <span className="hidden w-10 shrink-0 text-center text-2xl text-white/60 tabular-nums sm:block">{ep.episodeNumber}</span>
+      <div className="flex min-w-0 items-center gap-3 sm:contents">
+        <div className="relative aspect-video w-32 shrink-0 overflow-hidden rounded bg-[#2a2a2a] sm:w-36">
+          <Artwork image={ep.still ?? title.backdrop} alt="" sizes="150px" quality={60} />
+          {ep.playable && (
+            <span className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover/ep:opacity-100 group-focus-visible/ep:opacity-100 max-sm:opacity-100">
+              <span className="flex size-9 items-center justify-center rounded-full border-2 border-white bg-black/50 sm:size-10">
+                <Play className="size-4 translate-x-px fill-white sm:size-5" />
+              </span>
+            </span>
+          )}
+          {progress != null && (
+            <div className="absolute inset-x-0 bottom-0 h-1 bg-white/30" aria-label={ep.progress?.completed ? "Đã xem" : `Đã xem ${Math.round(progress * 100)}%`}>
+              <div className="h-full bg-brand" style={{ width: `${Math.max(4, progress * 100)}%` }} />
+            </div>
+          )}
+        </div>
+        {/* phone: number + name stacked next to the still, synopsis full width below */}
+        <div className="min-w-0 flex-1 sm:hidden">
+          <h3 className="line-clamp-2 text-[0.95rem] leading-snug font-semibold">
+            {ep.episodeNumber}. {episodeName(ep)}
+          </h3>
+          <p className="mt-0.5 text-xs text-white/60">{[ep.runtimeMinutes ? `${ep.runtimeMinutes} phút` : null, remaining].filter(Boolean).join(" · ")}</p>
+          {badge}
+        </div>
+      </div>
+      {ep.overview && <p className="line-clamp-3 text-[0.8rem] leading-snug text-white/70 sm:hidden">{ep.overview}</p>}
+      <div className="hidden min-w-0 flex-1 sm:block">
+        <div className="flex items-baseline justify-between gap-3">
+          <h3 className="truncate font-semibold">{episodeName(ep)}</h3>
+          {ep.runtimeMinutes ? <span className="shrink-0 text-sm text-white/70">{ep.runtimeMinutes} phút</span> : null}
+        </div>
+        {ep.overview && <p className="mt-1 line-clamp-3 text-sm leading-snug text-white/70">{ep.overview}</p>}
+        {remaining ? <p className="mt-1 text-xs text-white/60">{remaining}</p> : null}
+        {badge}
+      </div>
+    </>
+  );
+  const cls = cn(
+    "group/ep flex flex-col gap-2.5 rounded px-2 py-4 outline-none sm:flex-row sm:items-center sm:gap-5 md:px-4",
+    highlighted && "bg-[#333]",
+    ep.playable && "hover:bg-[#2a2a2a] focus-visible:ring-2 focus-visible:ring-white",
+  );
+  return (
+    <li data-testid="episode-row" data-episode-id={ep.id} data-playable={ep.playable}>
+      {ep.playable ? (
+        <Link href={watchHref(title, ep.id)} className={cls} aria-label={`Phát ${episodeCode(ep)} · ${episodeName(ep)}`}>
+          {inner}
+        </Link>
+      ) : (
+        <div className={cn(cls, "opacity-60")} aria-disabled>
+          {inner}
+        </div>
+      )}
+    </li>
   );
 }
 

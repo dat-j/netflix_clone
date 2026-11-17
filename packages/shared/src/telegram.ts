@@ -18,6 +18,8 @@ const ALLOWED: RegExp[] = [
   /^\/plans$/,
 ];
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function sanitizeMiniAppPath(to: string | null | undefined): string {
   if (typeof to !== "string" || to.length === 0 || to.length > 500) return MINI_APP_DEFAULT_PATH;
   // Chỉ path tương đối gốc; chặn "//evil", "/\\evil", ký tự điều khiển/khoảng trắng
@@ -36,6 +38,12 @@ export function sanitizeMiniAppPath(to: string | null | undefined): string {
   if (pathname === "/search") {
     const q = url.searchParams.get("q")?.trim().slice(0, 100) ?? "";
     return q ? `/search?q=${encodeURIComponent(q)}` : "/search";
+  }
+  // /watch/<titleId> được mang thêm ?episode=<uuid> (mở thẳng một tập phim bộ); giá trị khác bị bỏ
+  if (pathname.startsWith("/watch/")) {
+    const episode = url.searchParams.get("episode");
+    if (episode && UUID_RE.test(episode)) return `${pathname}?episode=${episode}`;
+    return pathname;
   }
   // Các path khác không mang query
   return pathname;

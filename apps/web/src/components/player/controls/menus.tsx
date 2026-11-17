@@ -5,13 +5,14 @@ import { cn } from "@/lib/utils";
 import { usePlayer } from "../controller";
 import { qualityName } from "../lib/format";
 import { RATES } from "../lib/prefs";
+import { audioTrackLabel, selectableSubtitles } from "../lib/series";
 import { currentQualityLabel } from "../lib/state";
 import { usePlayerStore, type MenuId } from "../store";
 import { ControlButton } from "./control-button";
 import { CheckIcon, QualityIcon, SpeedIcon, SubtitlesIcon } from "./icons";
 
 /** Anchored popover on desktop, bottom sheet on touch. */
-function MenuPanel({ id, title, children, className }: { id: Exclude<MenuId, null>; title: string; children: ReactNode; className?: string }) {
+export function MenuPanel({ id, title, children, className }: { id: Exclude<MenuId, null>; title: string; children: ReactNode; className?: string }) {
   const { setMenu, touch } = usePlayer();
   const open = usePlayerStore((s) => s.menu === id);
   const ref = useRef<HTMLDivElement>(null);
@@ -49,7 +50,7 @@ function MenuPanel({ id, title, children, className }: { id: Exclude<MenuId, nul
   );
 }
 
-function MenuHeading({ children }: { children: ReactNode }) {
+export function MenuHeading({ children }: { children: ReactNode }) {
   return <h3 className="px-5 pb-2 text-lg font-bold tracking-tight text-white md:text-xl">{children}</h3>;
 }
 
@@ -73,7 +74,7 @@ function MenuItem({ checked, onSelect, children, testId }: { checked: boolean; o
   );
 }
 
-function MenuTrigger({ id, label, children }: { id: Exclude<MenuId, null>; label: string; children: ReactNode }) {
+export function MenuTrigger({ id, label, children }: { id: Exclude<MenuId, null>; label: string; children: ReactNode }) {
   const { setMenu } = usePlayer();
   const open = usePlayerStore((s) => s.menu === id);
   return (
@@ -96,10 +97,10 @@ function MenuTrigger({ id, label, children }: { id: Exclude<MenuId, null>; label
 
 export function AudioSubtitleMenu() {
   const { session, setSubtitle, setAudioTrack, setMenu } = usePlayer();
-  const subtitleLang = usePlayerStore((s) => s.subtitleLang);
+  const subtitleId = usePlayerStore((s) => s.subtitleId);
   const audioTracks = usePlayerStore((s) => s.audioTracks);
   const activeAudio = usePlayerStore((s) => s.activeAudioTrack);
-  const subs = session?.subtitles ?? [];
+  const subs = selectableSubtitles(session?.subtitles ?? []);
   if (subs.length === 0 && audioTracks.length < 2) return null;
 
   return (
@@ -111,20 +112,20 @@ export function AudioSubtitleMenu() {
         {audioTracks.length > 1 && (
           <div className="min-w-[200px] flex-1">
             <MenuHeading>Âm thanh</MenuHeading>
-            {audioTracks.map((t) => (
-              <MenuItem key={t.id} checked={t.id === activeAudio} onSelect={() => { setAudioTrack(t.id); setMenu(null); }}>
-                {t.name}
+            {audioTracks.map((t, i) => (
+              <MenuItem key={t.id} checked={t.id === activeAudio} onSelect={() => { setAudioTrack(t.id); setMenu(null); }} testId={`audio-track-${i}`}>
+                {audioTrackLabel(t, session?.audioTracks ?? [], i)}
               </MenuItem>
             ))}
           </div>
         )}
         <div className="min-w-[200px] flex-1">
           <MenuHeading>Phụ đề</MenuHeading>
-          <MenuItem checked={subtitleLang === null} onSelect={() => { setSubtitle(null); setMenu(null); }} testId="subtitle-off">
+          <MenuItem checked={subtitleId === null} onSelect={() => { setSubtitle(null); setMenu(null); }} testId="subtitle-off">
             Tắt
           </MenuItem>
           {subs.map((s) => (
-            <MenuItem key={s.id} checked={subtitleLang === s.language} onSelect={() => { setSubtitle(s.language); setMenu(null); }}>
+            <MenuItem key={s.id} checked={subtitleId === s.id} onSelect={() => { setSubtitle(s.id); setMenu(null); }} testId={`subtitle-${s.language}`}>
               {s.label}
             </MenuItem>
           ))}

@@ -8,6 +8,14 @@
  *   G:<page>             genre menu
  *   L:<list>:<page>      list screen
  *   D:<id22>[:<list>:<page>]  title detail; optional back-reference to the list page it came from
+ *   E:<id22>:<sn>:<page>[:<list>:<page>]  episode picker of a series: season number + episode-grid page
+ *   P:<id22>:<sn>:<en>[:<list>:<page>]    one episode, addressed by (season number, episode number)
+ *
+ * Episodes are addressed by the series id plus season/episode NUMBERS (unique per title / per season) instead of
+ * their own UUIDs, so every series button fits in ≤ 33 bytes before the optional list back-reference. The back-ref
+ * (the list the series was opened from) rides along through the picker so "↩ Quay lại" can unwind the whole chain;
+ * like on D it is dropped rather than overflowing 64 bytes. Paging state of the picker is recomputed server-side
+ * from the episode's position, so it never needs to be stored.
  *
  *   <list> = m (phim lẻ) | s (phim bộ) | n (mới) | t (hot) | g.<genre-slug> | q.<query-id>
  *   <id22> = title UUID as 16 bytes base64url (22 chars) instead of 36 hex chars.
@@ -32,13 +40,20 @@ export type Action =
   | { a: "help" }
   | { a: "genres"; page: number }
   | { a: "list"; list: ListRef; page: number }
-  | { a: "detail"; id: string; back?: ListPos };
+  | { a: "detail"; id: string; back?: ListPos }
+  | { a: "episodes"; id: string; season: number; page: number; back?: ListPos }
+  | { a: "episode"; id: string; season: number; episode: number; back?: ListPos };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const QID_RE = /^[A-Za-z0-9_-]{6,16}$/;
 const PAGE_RE = /^[1-9]\d{0,3}$/;
 const ID22_RE = /^[A-Za-z0-9_-]{22}$/;
+/** Season numbers 0…999 (0 = specials), episode numbers 0…9999; canonical decimal only (no leading zeros). */
+const SEASON_RE = /^(0|[1-9]\d{0,2})$/;
+const EPISODE_RE = /^(0|[1-9]\d{0,3})$/;
+export const MAX_SEASON = 999;
+export const MAX_EPISODE = 9999;
 
 export function uuidToShort(uuid: string): string {
   if (!UUID_RE.test(uuid)) throw new Error(`not a uuid: ${uuid}`);
@@ -93,6 +108,26 @@ function clampPage(p: number): number {
   return Math.min(MAX_PAGE, Math.max(1, Math.floor(p) || 1));
 }
 
+function checkNum(n: number, max: number, what: string): number {
+  if (!Number.isInteger(n) || n < 0 || n > max) throw new Error(`invalid ${what} number: ${n}`);
+  return n;
+}
+
+/** Appends `:<list>:<page>` when it still fits in 64 bytes (a back-reference is a nicety, never a reason to fail). */
+function withBack(s: string, back: ListPos | undefined): string {
+  if (!back) return s;
+  const full = `${s}:${encodeList(back.list)}:${clampPage(back.page)}`;
+  return Buffer.byteLength(full) <= CALLBACK_MAX_BYTES ? full : s;
+}
+
+function decodeBack(parts: string[], at: number): ListPos | undefined | null {
+  if (parts.length === at) return undefined;
+  if (parts.length !== at + 2) return null;
+  const list = decodeList(parts[at]!);
+  if (!list || !PAGE_RE.test(parts[at + 1]!)) return null;
+  return { list, page: Number(parts[at + 1]) };
+}
+
 /** Encodes an action; throws if the result would exceed 64 bytes (use `fitsCallback` to test first). */
 export function encode(action: Action): string {
   let s: string;
@@ -103,15 +138,18 @@ export function encode(action: Action): string {
     case "help": s = "?"; break;
     case "genres": s = `G:${clampPage(action.page)}`; break;
     case "list": s = `L:${encodeList(action.list)}:${clampPage(action.page)}`; break;
-    case "detail": {
-      s = `D:${uuidToShort(action.id)}`;
-      if (action.back) {
-        const withBack = `${s}:${encodeList(action.back.list)}:${clampPage(action.back.page)}`;
-        // A back-reference is a nicety: drop it rather than fail when a long genre slug would overflow.
-        if (Buffer.byteLength(withBack) <= CALLBACK_MAX_BYTES) s = withBack;
-      }
+    case "detail":
+      s = withBack(`D:${uuidToShort(action.id)}`, action.back);
       break;
-    }
+    case "episodes":
+      s = withBack(`E:${uuidToShort(action.id)}:${checkNum(action.season, MAX_SEASON, "season")}:${clampPage(action.page)}`, action.back);
+      break;
+    case "episode":
+      s = withBack(
+        `P:${uuidToShort(action.id)}:${checkNum(action.season, MAX_SEASON, "season")}:${checkNum(action.episode, MAX_EPISODE, "episode")}`,
+        action.back,
+      );
+      break;
   }
   if (Buffer.byteLength(s) > CALLBACK_MAX_BYTES) throw new Error(`callback data too long (${Buffer.byteLength(s)} bytes)`);
   return s;
@@ -133,13 +171,25 @@ export function decode(data: string | undefined | null): Action | null {
     const list = decodeList(parts[1]!);
     return list ? { a: "list", list, page: Number(parts[2]) } : null;
   }
-  if (head === "D" && (parts.length === 2 || parts.length === 4)) {
+  if (head === "D" && parts.length >= 2) {
     const id = shortToUuid(parts[1]!);
-    if (!id) return null;
-    if (parts.length === 2) return { a: "detail", id };
-    const list = decodeList(parts[2]!);
-    if (!list || !PAGE_RE.test(parts[3]!)) return null;
-    return { a: "detail", id, back: { list, page: Number(parts[3]) } };
+    const back = decodeBack(parts, 2);
+    if (!id || back === null) return null;
+    return back ? { a: "detail", id, back } : { a: "detail", id };
+  }
+  if ((head === "E" || head === "P") && parts.length >= 4) {
+    const id = shortToUuid(parts[1]!);
+    const back = decodeBack(parts, 4);
+    if (!id || back === null || !SEASON_RE.test(parts[2]!)) return null;
+    const season = Number(parts[2]);
+    if (head === "E") {
+      if (!PAGE_RE.test(parts[3]!)) return null;
+      const a: Action = { a: "episodes", id, season, page: Number(parts[3]) };
+      return back ? { ...a, back } : a;
+    }
+    if (!EPISODE_RE.test(parts[3]!)) return null;
+    const a: Action = { a: "episode", id, season, episode: Number(parts[3]) };
+    return back ? { ...a, back } : a;
   }
   return null;
 }

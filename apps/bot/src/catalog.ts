@@ -22,12 +22,27 @@ export interface TitleCard {
   backdropKey: string | null;
   logoKey: string | null;
   overview: string | null;
+  /** Series only: seasons with ≥1 PUBLISHED episode (undefined/0 for movies or series without episodes yet). */
+  seasonCount?: number;
+}
+
+/** A PUBLISHED episode (drafts/archived episodes never leave the catalog). */
+export interface EpisodeInfo {
+  id: string;
+  episodeNumber: number;
+  name: string | null;
+  overview: string | null;
+  runtimeMinutes: number | null;
+  stillKey: string | null;
+  /** main asset transcoded and READY */
+  playable: boolean;
 }
 
 export interface SeasonInfo {
   seasonNumber: number;
   name: string | null;
-  episodes: { episodeNumber: number; name: string | null; playable: boolean }[];
+  /** PUBLISHED episodes only, by episode number; seasons without any are omitted. */
+  episodes: EpisodeInfo[];
 }
 
 export interface TitleDetail extends TitleCard {
@@ -66,6 +81,7 @@ const cardSelect = {
   tmdbRating: true, overview: true,
   genres: { select: { genre: { select: { name: true } } } },
   images: { where: { kind: { in: ["POSTER", "BACKDROP", "LOGO"] } }, select: { kind: true, key: true, isPrimary: true } },
+  _count: { select: { seasons: { where: { episodes: { some: { status: "PUBLISHED" } } } } } },
 } satisfies Prisma.TitleSelect;
 type CardRow = Prisma.TitleGetPayload<{ select: typeof cardSelect }>;
 
@@ -93,7 +109,15 @@ function toCard(r: CardRow): TitleCard {
     backdropKey: pickImageKey(r.images, "BACKDROP"),
     logoKey: pickImageKey(r.images, "LOGO"),
     overview: r.overview,
+    ...(r.type === "SERIES" ? { seasonCount: r._count.seasons } : {}),
   };
+}
+
+/** Specials (season 0) go last, like on the web; everything else by season number. */
+export function seasonOrder(a: { seasonNumber: number }, b: { seasonNumber: number }): number {
+  const ka = a.seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : a.seasonNumber;
+  const kb = b.seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : b.seasonNumber;
+  return ka - kb;
 }
 
 const PUBLISHED: Prisma.TitleWhereInput = { status: "PUBLISHED" };
@@ -178,14 +202,19 @@ export class PrismaCatalog implements Catalog {
             episodes: {
               where: { status: "PUBLISHED" },
               orderBy: { episodeNumber: "asc" },
-              select: { episodeNumber: true, name: true, mainAsset: { select: { status: true, renditions: { select: { height: true } } } } },
+              select: {
+                id: true, episodeNumber: true, name: true, overview: true, runtimeMinutes: true,
+                images: { where: { kind: "STILL" }, select: { kind: true, key: true, isPrimary: true } },
+                mainAsset: { select: { status: true, renditions: { select: { height: true } } } },
+              },
             },
           },
         },
       },
     });
     if (!t) return null;
-    const card = toCard({ ...t, genres: t.genres.map((g) => ({ genre: { name: g.genre.name } })) });
+    const seasons = t.seasons.filter((s) => s.episodes.length > 0).sort(seasonOrder);
+    const card = toCard({ ...t, genres: t.genres.map((g) => ({ genre: { name: g.genre.name } })), _count: { seasons: seasons.length } });
     const ready = [
       ...(t.mainAsset?.status === "READY" ? [t.mainAsset] : []),
       ...t.seasons.flatMap((s) => s.episodes.map((e) => e.mainAsset).filter((a) => a?.status === "READY")),
@@ -201,13 +230,19 @@ export class PrismaCatalog implements Catalog {
       cast: t.credits.filter((c) => c.role === "CAST").map((c) => c.person.name),
       playable: ready.length > 0,
       maxHeight: heights.length ? Math.max(...heights) : null,
-      seasons: t.seasons
-        .filter((s) => s.episodes.length > 0)
-        .map((s) => ({
-          seasonNumber: s.seasonNumber,
-          name: s.name,
-          episodes: s.episodes.map((e) => ({ episodeNumber: e.episodeNumber, name: e.name, playable: e.mainAsset?.status === "READY" })),
+      seasons: seasons.map((s) => ({
+        seasonNumber: s.seasonNumber,
+        name: s.name,
+        episodes: s.episodes.map((e) => ({
+          id: e.id,
+          episodeNumber: e.episodeNumber,
+          name: e.name,
+          overview: e.overview,
+          runtimeMinutes: e.runtimeMinutes,
+          stillKey: pickImageKey(e.images, "STILL"),
+          playable: e.mainAsset?.status === "READY",
         })),
+      })),
     };
   }
 

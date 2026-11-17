@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { miniAppUrl, paths, websiteUrl } from "../src/lib/links.js";
+import { sanitizeMiniAppPath } from "../../../packages/shared/src/telegram.js";
+import { MINI_APP_EPISODE_DEEP_LINKS, miniAppUrl, paths, websiteUrl } from "../src/lib/links.js";
 
 const WEB = "https://boxphim.example/";
 
@@ -30,5 +31,14 @@ describe("Mini App URLs", () => {
   });
   it("builds website URLs", () => {
     expect(websiteUrl(WEB, paths.title("nguoi-gac-den-bien"))).toBe("https://boxphim.example/title/nguoi-gac-den-bien");
+  });
+  it("episode links match what the shared Mini App sanitizer keeps", () => {
+    const tid = "01a1e3ee-ddff-778e-87e2-24a9c49e6f69", eid = "01a1e3ee-ddff-778e-87e2-24a9c49e6f70";
+    const deep = `/watch/${tid}?episode=${eid}`;
+    // If this fails, the sanitizer changed: flip MINI_APP_EPISODE_DEEP_LINKS in src/lib/links.ts.
+    expect(sanitizeMiniAppPath(deep) === deep).toBe(MINI_APP_EPISODE_DEEP_LINKS);
+    const p = paths.episode(tid, eid, "pho-co-tinh-nhan");
+    expect(p).toBe(MINI_APP_EPISODE_DEEP_LINKS ? deep : "/title/pho-co-tinh-nhan");
+    expect(sanitizeMiniAppPath(p)).toBe(p); // whatever we emit survives the Mini App entry unchanged
   });
 });

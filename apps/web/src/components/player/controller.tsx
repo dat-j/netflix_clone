@@ -1,6 +1,6 @@
 "use client";
 
-import type { PlaybackSession, TitleDetail } from "@app/shared";
+import type { EpisodeRef, PlaybackSession, TitleDetail } from "@app/shared";
 import { createContext, useContext } from "react";
 import type { PlayerEngine } from "./engine";
 import type { MenuId } from "./store";
@@ -17,7 +17,8 @@ export interface PlayerController {
   setRate: (r: number) => void;
   setLevel: (index: number) => void;
   setAudioTrack: (id: number) => void;
-  setSubtitle: (lang: string | null) => void;
+  /** Subtitle track id, null = off */
+  setSubtitle: (id: string | null) => void;
   toggleFullscreen: () => void;
   togglePip: () => void;
   goBack: () => void;
@@ -31,7 +32,14 @@ export interface PlayerController {
   canFullscreen: boolean;
   /** Coarse pointer (touch) layout */
   touch: boolean;
-  nextEpisodeHref: string | null;
+  titleId: string;
+  /** Series: next published episode (from the session), null when this is the last one / a movie */
+  nextEpisode: EpisodeRef | null;
+  /** Series: switch to another episode in place (ends the current session first, updates the URL) */
+  playEpisode: (ep: string | Pick<EpisodeRef, "id">) => void;
+  playNext: () => void;
+  /** Seek to the end of the intro */
+  skipIntro: () => void;
 }
 
 export const PlayerControllerContext = createContext<PlayerController | null>(null);

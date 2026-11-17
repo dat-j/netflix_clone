@@ -71,7 +71,7 @@ describe("probe parsing", () => {
       ],
     });
     const subs = planSubtitles(p);
-    expect(subs.extract.map((x) => [x.streamIndex, x.language, x.label, x.fileName])).toEqual([[3, "vi", "Vietnamese", "01_vi.vtt"]]);
+    expect(subs.extract.map((x) => [x.streamIndex, x.language, x.label, x.fileName])).toEqual([[3, "vi", "Tiếng Việt", "01_vi.vtt"]]);
     expect(subs.skipped.map((x) => x.index)).toEqual([4]);
   });
 

@@ -163,6 +163,18 @@ export function createBot(token: string, deps: BotDeps, opts: { botInfo?: UserFr
         await present(ctx, s, mode);
         return undefined;
       }
+      case "episodes":
+      case "episode": {
+        const r = action.a === "episodes"
+          ? await screens.episodes(action.id, action.season, action.page, action.back)
+          : await screens.episode(action.id, action.season, action.episode, action.back);
+        if (!r) {
+          if (mode === "send") await present(ctx, await screens.home(ctx.from?.first_name), mode);
+          return "Phim này hiện không có trên BoxPhim.";
+        }
+        await present(ctx, r.screen, mode);
+        return r.toast;
+      }
     }
   }
 

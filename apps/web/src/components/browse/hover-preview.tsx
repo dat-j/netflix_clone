@@ -11,6 +11,7 @@ import { MatchScore, MaturityBadge, MyListButton, RateButton, watchHref } from "
 import { Artwork } from "@/components/ui/artwork";
 import { Tooltip } from "@/components/ui/tooltip";
 import { rememberCard, titleHref } from "@/lib/card-cache";
+import { useCardEpisodeLabel } from "@/lib/hooks/use-episode-label";
 import { useIsClient } from "@/lib/hooks/use-media";
 import { useUI, type HoverTarget } from "@/lib/ui-store";
 import { cn, formatRemaining, formatRuntime } from "@/lib/utils";
@@ -90,6 +91,7 @@ function MiniCard({ target }: { target: HoverTarget }) {
 
   const progress = card.progress && !card.progress.completed ? card.progress : null;
   const runtime = card.type === "SERIES" ? "Phim bộ" : formatRuntime(card.runtimeMinutes);
+  const episode = useCardEpisodeLabel(card);
 
   return (
     <motion.div
@@ -138,7 +140,7 @@ function MiniCard({ target }: { target: HoverTarget }) {
         className="space-y-3 p-4 text-[0.8rem] shadow-[0_-1px_0_rgba(255,255,255,0.04)]"
       >
         <div className="flex items-center gap-2">
-          <Tooltip content={progress ? "Tiếp tục xem" : "Phát"}>
+          <Tooltip content={progress ? (episode ? `Tiếp tục ${episode.split(" · ")[0]}` : "Tiếp tục xem") : "Phát"}>
             <Link
               href={watchHref(card)}
               aria-label={`Phát ${card.name}`}
@@ -161,6 +163,11 @@ function MiniCard({ target }: { target: HoverTarget }) {
           </Tooltip>
         </div>
 
+        {episode ? (
+          <p className="truncate text-[0.85rem] font-semibold text-white" data-testid="hover-episode-label">
+            {episode}
+          </p>
+        ) : null}
         {progress ? (
           <div className="flex items-center gap-2">
             <div className="h-[3px] flex-1 bg-white/25">

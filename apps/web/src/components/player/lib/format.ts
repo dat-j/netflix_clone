@@ -44,9 +44,5 @@ export function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
-/** "S1:E3 Tên tập" label for series. */
-export function episodeLabel(ep: { seasonNumber: number; episodeNumber: number; name: string | null } | null): string | null {
-  if (!ep) return null;
-  const code = `T${ep.seasonNumber}:E${ep.episodeNumber}`;
-  return ep.name ? `${code} “${ep.name}”` : code;
-}
+/** "T1:E3 · Tên tập" label for series (shared with browse/detail). */
+export { episodeLabel } from "../../../lib/episodes";

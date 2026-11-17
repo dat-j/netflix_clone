@@ -11,6 +11,7 @@ import { StorageService } from "../storage/storage.service.js";
 import { CdnSigner } from "../storage/cdn-signer.js";
 import { ImagePipelineService, pickImage } from "../storage/image-pipeline.service.js";
 import { visibleWhere } from "../catalog/title-cards.service.js";
+import { SeriesService, type PlayableEpisode } from "../catalog/series.service.js";
 import { isValidRenditionName, masterRenditionNames, rewriteMaster, rewriteRendition } from "./playlist.js";
 import { HEARTBEAT_INTERVAL_SEC, StreamSessionStore, type StreamSession } from "./stream-sessions.js";
 
@@ -31,6 +32,19 @@ export function resumePosition(p: { positionSec: number; durationSec: number; co
 
 interface PlaylistSource { assetId: string; renditions: string[] }
 
+/**
+ * Track âm thanh hiển thị cho player: chỉ asset bố cục mới (mỗi track một playlist AUDIO riêng, `playlistKey`
+ * khác null) và có ≥ 2 track. Asset cũ (audio mux trong video, AudioTrack.playlistKey = null) → [].
+ */
+export function audioTracksOf(
+  rows: { id: string; language: string; label: string; channels: number; isDefault: boolean; playlistKey: string | null }[],
+  assetPrefix: string,
+): PlaybackSession["audioTracks"] {
+  const sep = rows.filter((a) => a.playlistKey?.startsWith(assetPrefix));
+  if (sep.length < 2) return [];
+  return sep.map((a) => ({ id: a.id, language: a.language, label: a.label, channels: a.channels, isDefault: a.isDefault }));
+}
+
 @Injectable()
 export class PlaybackService {
   private readonly logger = new Logger("PlaybackService");
@@ -44,6 +58,7 @@ export class PlaybackService {
     @Inject(CdnSigner) private readonly cdn: CdnSigner,
     @Inject(ImagePipelineService) private readonly images: ImagePipelineService,
     @Inject(StreamSessionStore) private readonly sessions: StreamSessionStore,
+    @Inject(SeriesService) private readonly series: SeriesService,
   ) {}
 
   // ───────── playlist gốc từ bucket (cache Redis) ─────────
@@ -91,19 +106,40 @@ export class PlaybackService {
 
     let assetId: string | null = title.mainAssetId;
     let episode: PlaybackSession["episode"] = null;
+    let markers: PlaybackSession["markers"] = { introStartSec: null, introEndSec: null, creditsStartSec: null };
+    let nextEpisode: PlaybackSession["nextEpisode"] = null;
+    let ep: PlayableEpisode | null = null;
+    let all: PlayableEpisode[] = [];
     if (episodeId) {
-      const ep = await this.prisma.episode.findFirst({
-        where: { id: episodeId, titleId, status: "PUBLISHED" },
-        select: { id: true, episodeNumber: true, name: true, mainAssetId: true, season: { select: { seasonNumber: true } } },
-      });
-      if (!ep) throw new ApiException(404, "NOT_FOUND", "Không tìm thấy tập phim");
+      all = (await this.series.playableEpisodes([titleId])).get(titleId) ?? [];
+      ep = all.find((e) => e.id === episodeId) ?? null;
+      if (!ep) {
+        const exists = await this.prisma.episode.findFirst({ where: { id: episodeId, titleId, status: "PUBLISHED" }, select: { id: true } });
+        if (!exists) throw new ApiException(404, "NOT_FOUND", "Không tìm thấy tập phim");
+        throw new ApiException(404, "NOT_PLAYABLE", "Tập phim chưa sẵn sàng để phát");
+      }
+    } else if (title.type === "SERIES") {
+      // Phim bộ không chỉ định tập → tập "xem tiếp" của profile; title bộ cũ chỉ có asset chính vẫn phát như phim lẻ.
+      const r = await this.series.resume(profile.id, titleId);
+      if (r) {
+        ep = r.episode;
+        all = r.all;
+      }
+    }
+    if (ep) {
       assetId = ep.mainAssetId;
-      episode = { id: ep.id, seasonNumber: ep.season.seasonNumber, episodeNumber: ep.episodeNumber, name: ep.name };
+      episode = { id: ep.id, seasonNumber: ep.seasonNumber, episodeNumber: ep.episodeNumber, name: ep.name };
+      markers = { introStartSec: ep.introStartSec, introEndSec: ep.introEndSec, creditsStartSec: ep.creditsStartSec };
+      const next = this.series.next(all, ep);
+      nextEpisode = next ? this.series.episodeRef(next) : null;
     }
     const asset = assetId
       ? await this.prisma.mediaAsset.findUnique({
         where: { id: assetId },
-        select: { id: true, status: true, durationSec: true, thumbsVttKey: true, subtitleTracks: true },
+        select: {
+          id: true, status: true, durationSec: true, thumbsVttKey: true, subtitleTracks: true,
+          audioTracks: { orderBy: [{ playlistKey: "asc" }, { id: "asc" }] },
+        },
       })
       : null;
     if (!asset || asset.status !== "READY") throw new ApiException(404, "NOT_PLAYABLE", "Phim chưa sẵn sàng để phát");
@@ -111,8 +147,9 @@ export class PlaybackService {
     if (!renditions?.length) throw new ApiException(404, "NOT_PLAYABLE", "Phim chưa sẵn sàng để phát");
 
     const sid = randomBytes(16).toString("base64url");
+    const playEpisodeId = episode?.id ?? null;
     const session: StreamSession = {
-      sid, userId: user.id, profileId: profile.id, titleId, episodeId, assetId: asset.id,
+      sid, userId: user.id, profileId: profile.id, titleId, episodeId: playEpisodeId, assetId: asset.id,
       maxHeight: ent.maxHeight, renditions, createdAt: Date.now(),
     };
     const ok = await this.sessions.start(session, ent.maxConcurrentStreams);
@@ -124,7 +161,7 @@ export class PlaybackService {
 
     const [progress, heights] = await Promise.all([
       this.prisma.watchProgress.findFirst({
-        where: { profileId: profile.id, titleId, episodeId }, orderBy: { updatedAt: "desc" },
+        where: { profileId: profile.id, titleId, episodeId: playEpisodeId }, orderBy: { updatedAt: "desc" },
         select: { positionSec: true, durationSec: true, completed: true },
       }),
       this.prisma.rendition.findMany({ where: { assetId: asset.id, name: { in: renditions } }, select: { height: true } }),
@@ -148,7 +185,11 @@ export class PlaybackService {
       episode,
       subtitles: asset.subtitleTracks
         .filter((s) => s.key.startsWith(prefix))
-        .map((s) => ({ id: s.id, language: s.language, label: s.label, url: this.cdn.signedUrl(s.key), isDefault: s.isDefault })),
+        .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || Number(a.isForced) - Number(b.isForced) || a.key.localeCompare(b.key))
+        .map((s) => ({ id: s.id, language: s.language, label: s.label, url: this.cdn.signedUrl(s.key), isDefault: s.isDefault, isForced: s.isForced })),
+      audioTracks: audioTracksOf(asset.audioTracks, prefix),
+      markers,
+      nextEpisode,
     };
   }
 

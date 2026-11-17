@@ -31,6 +31,7 @@ import {
   buildThumbFrameArgs,
   buildTranscodeArgs,
   keyInfoFile,
+  type MasterAudio,
   type MasterVariant,
   outputFrameRate,
   parseMediaPlaylist,
@@ -39,7 +40,8 @@ import {
 } from "./hls.js";
 import { selectRenditions } from "./renditions.js";
 import { probeFields } from "./source-files.js";
-import { buildSubtitleArgs, languageLabel, normalizeLanguage, planSubtitles, type SubtitlePlan } from "./subtitles.js";
+import { buildSubtitleArgs, planSubtitles, type SubtitlePlan } from "./subtitles.js";
+import { planAudio } from "./audio.js";
 import { buildThumbsVtt, composeSprites, planThumbs, thumbCues } from "./thumbs.js";
 
 export interface TranscodeContext {
@@ -111,11 +113,6 @@ class ProgressReporter {
   }
 }
 
-/** Default audio track: disposition.default, else the first audio stream. */
-export function pickAudioStream(p: FfprobeResult) {
-  const audio = (p.streams ?? []).filter((s) => s.codec_type === "audio" && (s.channels ?? 1) > 0);
-  return audio.find((s) => s.disposition?.default) ?? audio[0];
-}
 
 async function listFiles(dir: string): Promise<string[]> {
   const out: string[] = [];
@@ -206,14 +203,14 @@ export async function runTranscode(ctx: TranscodeContext, data: TranscodeJobData
     const fps = outputFrameRate(srcFps);
     const duration = summary.durationSec!;
     const renditions = selectRenditions(disp.width, disp.height, fps);
-    const audio = pickAudioStream(probe);
-    const hasAudio = !!audio;
+    const audio = planAudio(probe);
+    const hasAudio = audio.length > 0;
     log.info("plan", {
       asset: asset.id,
       source: `${disp.width}x${disp.height}@${srcFps ?? "?"} ${summary.videoCodec}${hdr ? " HDR" : ""}`,
       duration: +duration.toFixed(2),
       renditions: renditions.map((r) => `${r.name}:${r.width}x${r.height}@${r.videoKbps}k`).join(","),
-      audio: audio ? `#${audio.index} ${audio.codec_name} ${audio.channels}ch` : "none",
+      audio: hasAudio ? audio.map((a) => `#${a.streamIndex}:${a.language}${a.isDefault ? "*" : ""}→${a.name}`).join(",") : "none",
     });
 
     // ── key material ──
@@ -228,13 +225,14 @@ export async function runTranscode(ctx: TranscodeContext, data: TranscodeJobData
     progress.setStage("transcoding");
     t = Date.now();
     for (const r of renditions) await mkdir(join(outDir, r.name));
+    for (const a of audio) await mkdir(join(outDir, a.name));
     const args = buildTranscodeArgs({
       input,
       outDir,
       keyInfoPath,
       renditions,
       videoStreamIndex: video.index,
-      audioStreamIndex: audio ? audio.index : null,
+      audio,
       sourceFrameRate: srcFps,
       hdr,
       preset: ctx.env.x264Preset,
@@ -260,23 +258,30 @@ export async function runTranscode(ctx: TranscodeContext, data: TranscodeJobData
     log.info("ffmpeg done", { asset: asset.id, s: timings.transcode, speed: +(duration / timings.transcode!).toFixed(2) + "x" });
 
     // ── variant stats + master ──
+    const playlistStats = async (dir: string, label: string) => {
+      const pl = await readFile(join(dir, "index.m3u8"), "utf8");
+      if (!pl.includes(`URI="${HLS_KEY_URI_PLACEHOLDER}"`) || !pl.includes(`IV=0x${ivHex}`)) {
+        throw new TranscodeError(`variant ${label} playlist is missing the expected EXT-X-KEY`);
+      }
+      const segs = parseMediaPlaylist(pl);
+      if (!segs.length) throw new TranscodeError(`variant ${label} has no segments`);
+      const sizes = new Map<string, number>();
+      for (const s of segs) sizes.set(s.uri, (await stat(join(dir, s.uri))).size);
+      return variantBandwidth(segs, (u) => sizes.get(u) ?? 0);
+    };
     const variants: MasterVariant[] = [];
     let outDuration = 0;
     for (const r of renditions) {
-      const dir = join(outDir, r.name);
-      const pl = await readFile(join(dir, "index.m3u8"), "utf8");
-      if (!pl.includes(`URI="${HLS_KEY_URI_PLACEHOLDER}"`) || !pl.includes(`IV=0x${ivHex}`)) {
-        throw new TranscodeError(`variant ${r.name} playlist is missing the expected EXT-X-KEY`);
-      }
-      const segs = parseMediaPlaylist(pl);
-      if (!segs.length) throw new TranscodeError(`variant ${r.name} has no segments`);
-      const sizes = new Map<string, number>();
-      for (const s of segs) sizes.set(s.uri, (await stat(join(dir, s.uri))).size);
-      const bw = variantBandwidth(segs, (u) => sizes.get(u) ?? 0);
+      const bw = await playlistStats(join(outDir, r.name), r.name);
       outDuration = Math.max(outDuration, bw.duration);
       variants.push({ rendition: r, bandwidth: bw.peak, averageBandwidth: bw.average });
     }
-    await writeFile(join(outDir, "master.m3u8"), buildMasterPlaylist(variants, { frameRate: fps, hasAudio }));
+    const audioMaster: MasterAudio[] = [];
+    for (const a of audio) {
+      const bw = await playlistStats(join(outDir, a.name), a.name);
+      audioMaster.push({ ...a, bandwidth: bw.peak, averageBandwidth: bw.average });
+    }
+    await writeFile(join(outDir, "master.m3u8"), buildMasterPlaylist(variants, { frameRate: fps, audio: audioMaster }));
 
     // ── thumbnails: sprites + VTT + poster ──
     progress.setStage("thumbnails");
@@ -373,7 +378,6 @@ export async function runTranscode(ctx: TranscodeContext, data: TranscodeJobData
     progress.setStage("finalizing");
     const enc = encryptMediaKey(key, ctx.env.mediaKeySecret);
     key.fill(0);
-    const lang = normalizeLanguage(audio?.tags?.language);
     await progress.flush();
     await prisma.$transaction([
       prisma.rendition.deleteMany({ where: { assetId: asset.id } }),
@@ -386,7 +390,8 @@ export async function runTranscode(ctx: TranscodeContext, data: TranscodeJobData
           width: r.width,
           height: r.height,
           videoKbps: r.videoKbps,
-          audioKbps: hasAudio ? r.audioKbps : 0,
+          // audio is a separate rendition group now; the variant plays with the default track's bitrate
+          audioKbps: hasAudio ? audio.find((a) => a.isDefault)!.kbps : 0,
           codecs: renditionCodecs(r, hasAudio),
           playlistKey: mediaLayout.renditionPlaylist(asset.id, r.name),
         })),
@@ -402,7 +407,14 @@ export async function runTranscode(ctx: TranscodeContext, data: TranscodeJobData
         })),
       }),
       prisma.audioTrack.createMany({
-        data: hasAudio ? [{ assetId: asset.id, language: lang, label: audio.tags?.title?.trim() || languageLabel(lang), channels: 2, playlistKey: null, isDefault: true }] : [],
+        data: audio.map((a) => ({
+          assetId: asset.id,
+          language: a.language,
+          label: a.label,
+          channels: a.channels,
+          playlistKey: mediaLayout.renditionPlaylist(asset.id, a.name),
+          isDefault: a.isDefault,
+        })),
       }),
       prisma.mediaAsset.update({
         where: { id: asset.id },

@@ -69,6 +69,9 @@
  *   GET    /playback/sessions/:sid/r/:rendition/index.m3u8 → playlist (URI segment → URL CDN đã ký, URI key → endpoint dưới)
  *   GET    /playback/sessions/:sid/key      → 16 byte thô (application/octet-stream)
  *   GET    /playback/preview/:titleId       [auth] → PreviewSource | 404  (trailer/preview cho hero + hover card, không cần thuê bao)
+ *   GET    /titles/:id/episodes?season=N    [auth + profile] → SeasonDto (một mùa, kèm progress từng tập)
+ *   Phim bộ: POST /playback/sessions không có episodeId → API chọn tập "xem tiếp" của profile (tập dở dang gần nhất,
+ *   hoặc tập kế sau tập đã xem xong, hoặc tập 1 mùa nhỏ nhất).
  *
  * DEV CDN (chỉ khi CDN_PROVIDER=local)
  *   GET    /dev-cdn/s/:token/:exp/*key      → stream object bucket media nếu token hợp lệ (hỗ trợ Range, CORS *)
@@ -100,6 +103,23 @@
  *   GET    /admin/jobs?status=&page=            → Paginated<TranscodeJobDto>
  *   POST   /admin/jobs/:id/retry                → TranscodeJobDto
  *   GET    /admin/genres                        → GenreDto[]
+ *
+ *   PHIM BỘ (admin)
+ *   GET    /admin/titles/:id/seasons                      → AdminSeason[] (kèm episodes, sắp theo số)
+ *   POST   /admin/titles/:id/seasons                      AdminSeasonInput → AdminSeason
+ *   PATCH  /admin/seasons/:seasonId                       Partial<AdminSeasonInput> → AdminSeason
+ *   DELETE /admin/seasons/:seasonId                       → 204 (409 nếu còn tập đã xuất bản)
+ *   POST   /admin/seasons/:seasonId/episodes              AdminEpisodeInput → AdminEpisode
+ *   POST   /admin/seasons/:seasonId/episodes/bulk         { count: number; startAt?: number } → AdminEpisode[] (tạo nhanh N tập trống)
+ *   PATCH  /admin/episodes/:episodeId                     Partial<AdminEpisodeInput> → AdminEpisode
+ *   DELETE /admin/episodes/:episodeId                     → 204 (409 nếu tập đang PUBLISHED — gỡ xuất bản trước)
+ *   POST   /admin/episodes/:episodeId/assets              { sourceFileId } → MediaAssetDto (gắn video chính của tập + đẩy transcode)
+ *   POST   /admin/episodes/:episodeId/publish             → AdminEpisode (yêu cầu mainAsset READY)
+ *   POST   /admin/episodes/:episodeId/unpublish           → AdminEpisode (409 nếu là tập PUBLISHED cuối cùng của title đang PUBLISHED)
+ *   POST   /admin/episodes/:episodeId/images              multipart(file, kind=STILL) → ImageDto (ảnh still của tập, thay ảnh cũ)
+ *   POST   /admin/seasons/:seasonId/publish-ready         → AdminEpisode[] (xuất bản mọi tập đã READY; trả về các tập vừa được xuất bản)
+ *   POST   /admin/titles/:id/sync-tmdb-seasons            { seasonNumbers?: number[] } → AdminSeason[] (kéo mùa/tập/ảnh still từ TMDB, tôn trọng field đã sửa tay)
+ *   Ghi chú: title SERIES được publish khi có ≥1 tập PUBLISHED (không cần mainAsset của title).
  *   GET/POST/PATCH/DELETE /admin/home-rows[/:id]      HomeRowInput ↔ HomeRowDto ; POST /admin/home-rows/reorder { ids: string[] }
  *   GET/POST/PATCH/DELETE /admin/collections[/:id]    CollectionInput ↔ CollectionDto
  *   GET/POST/DELETE /admin/billboards[/:id]           { titleId } ↔ BillboardDto
@@ -294,8 +314,20 @@ export interface EpisodeDto {
   still: ImageRef | null;
   progress: WatchProgressDto | null;
   playable: boolean;
+  seasonNumber: number;
+  airDate: string | null;
 }
-export interface SeasonDto { id: string; seasonNumber: number; name: string | null; episodes: EpisodeDto[] }
+export interface SeasonDto {
+  id: string;
+  seasonNumber: number;
+  name: string | null;
+  overview: string | null;
+  episodeCount: number;
+  episodes: EpisodeDto[];
+}
+
+/** Tóm tắt một tập dùng trong player / "xem tiếp" */
+export interface EpisodeRef { id: string; seasonNumber: number; episodeNumber: number; name: string | null; still: ImageRef | null; runtimeMinutes: number | null }
 
 export interface TitleDetail extends TitleCard {
   originalName: string | null;
@@ -311,7 +343,12 @@ export interface TitleDetail extends TitleCard {
   playable: boolean;
   /** Chiều cao tối đa có sẵn: 480/720/1080 */
   maxAvailableHeight: number | null;
+  /** Phim bộ: danh sách mùa; mùa đầu tiên/đang xem có `episodes` đầy đủ, các mùa khác có thể rỗng (tải qua /titles/:id/episodes) */
   seasons: SeasonDto[];
+  /** Phim bộ: tập sẽ phát khi bấm "Phát"/"Tiếp tục" cho profile hiện tại */
+  resumeEpisode: EpisodeRef | null;
+  seasonCount: number;
+  episodeCount: number;
 }
 
 export interface HomeRow {
@@ -342,7 +379,14 @@ export interface PlaybackSession {
   maxHeight: number;
   title: { id: string; name: string; type: TitleType; maturityRating: string | null; logo: ImageRef | null; backdrop: ImageRef | null };
   episode: { id: string; seasonNumber: number; episodeNumber: number; name: string | null } | null;
-  subtitles: { id: string; language: string; label: string; url: string; isDefault: boolean }[];
+  /** Phụ đề WebVTT (URL CDN đã ký) */
+  subtitles: { id: string; language: string; label: string; url: string; isDefault: boolean; isForced: boolean }[];
+  /** Track âm thanh có trong manifest (EXT-X-MEDIA TYPE=AUDIO); rỗng nếu chỉ một track */
+  audioTracks: { id: string; language: string; label: string; channels: number; isDefault: boolean }[];
+  /** Mốc intro/credits (giây) để hiện "Bỏ qua phần mở đầu" và đếm ngược sang tập kế */
+  markers: { introStartSec: number | null; introEndSec: number | null; creditsStartSec: number | null };
+  /** Tập kế tiếp đã xuất bản (phim bộ), null nếu hết */
+  nextEpisode: EpisodeRef | null;
 }
 export interface HeartbeatBody { positionSec: number; durationSec: number; paused?: boolean }
 export interface PreviewSource { manifestUrl: string; durationSec: number }
@@ -451,10 +495,51 @@ export interface AdminTitle {
   images: ImageDto[];
   mainAsset: MediaAssetDto | null;
   previewAsset: MediaAssetDto | null;
+  /** Phim bộ: số mùa / tổng tập / số tập đã xuất bản */
+  seasonCount: number;
+  episodeCount: number;
+  publishedEpisodeCount: number;
   createdAt: string;
   updatedAt: string;
 }
 export interface AttachAssetBody { sourceFileId: string; kind: AssetKind }
+
+export interface AdminSeasonInput { seasonNumber: number; name?: string | null; overview?: string | null; airDate?: string | null }
+export interface AdminSeason {
+  id: string;
+  titleId: string;
+  seasonNumber: number;
+  name: string | null;
+  overview: string | null;
+  airDate: string | null;
+  episodes: AdminEpisode[];
+}
+export interface AdminEpisodeInput {
+  episodeNumber: number;
+  name?: string | null;
+  overview?: string | null;
+  runtimeMinutes?: number | null;
+  airDate?: string | null;
+  introStartSec?: number | null;
+  introEndSec?: number | null;
+  creditsStartSec?: number | null;
+}
+export interface AdminEpisode {
+  id: string;
+  seasonId: string;
+  seasonNumber: number;
+  episodeNumber: number;
+  name: string | null;
+  overview: string | null;
+  runtimeMinutes: number | null;
+  airDate: string | null;
+  status: PublishStatus;
+  introStartSec: number | null;
+  introEndSec: number | null;
+  creditsStartSec: number | null;
+  still: ImageDto | null;
+  mainAsset: MediaAssetDto | null;
+}
 export interface HomeRowInput {
   kind: HomeRowKind;
   title: string;

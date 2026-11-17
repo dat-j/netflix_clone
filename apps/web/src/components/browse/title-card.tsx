@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { Artwork } from "@/components/ui/artwork";
 import { rememberCard, titleHref } from "@/lib/card-cache";
+import { useCardEpisodeLabel } from "@/lib/hooks/use-episode-label";
 import { useCanHover } from "@/lib/hooks/use-media";
 import { useUI, type HoverAlign, type HoverTarget } from "@/lib/ui-store";
 import { cn } from "@/lib/utils";
@@ -97,10 +98,23 @@ export function TitleCardTile({ card, hoverKey, variant = "default", align = "ce
           )}
         </div>
       )}
-      {variant === "continue" && (
-        <p className="mt-1.5 truncate text-[0.8rem] text-white/70 md:hidden">{card.name}</p>
-      )}
+      {variant === "continue" && <ContinueCaption card={card} />}
     </Link>
+  );
+}
+
+/** Under a continue-watching card: title on phones, plus "T1:E3 · Tên tập" for series. */
+function ContinueCaption({ card }: { card: TitleCard }) {
+  const label = useCardEpisodeLabel(card);
+  return (
+    <div className="mt-1.5 min-h-[1.1rem] text-[0.8rem] leading-tight">
+      <p className="truncate text-white/70 md:hidden">{card.name}</p>
+      {label ? (
+        <p className="truncate text-white/60 md:text-[0.85rem] md:text-white/75" data-testid="continue-episode-label">
+          {label}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

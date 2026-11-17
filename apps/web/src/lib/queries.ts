@@ -12,6 +12,7 @@ import type {
   ProfileDto,
   ProfileInput,
   RatingValue,
+  SeasonDto,
   SubscriptionDto,
   TitleCard,
   TitleDetail,
@@ -47,6 +48,7 @@ export const qk = {
   myList: ["catalog", "my-list"] as const,
   continueWatching: ["catalog", "continue-watching"] as const,
   preview: (id: string) => ["preview", id] as const,
+  episodes: (titleId: string, season: number) => ["catalog", "episodes", titleId, season] as const,
 };
 
 // ───────── session ─────────
@@ -138,6 +140,22 @@ export function useTitle(idOrSlug: string | null, initial?: TitleCard | null) {
     staleTime: 60_000,
     // Show the card data instantly while the detail loads (fields missing on TitleCard are optional in the UI)
     placeholderData: initial ? (initial as TitleDetail) : undefined,
+  });
+}
+
+/**
+ * One season with its episodes (+ per-episode progress). `initial` = the season as embedded in TitleDetail, used
+ * as-is when it already carries its episodes (the API only fills the first / current season).
+ */
+export function useSeasonEpisodes(titleId: string | null | undefined, season: SeasonDto | null | undefined, enabled = true) {
+  const embedded = season && (season.episodes.length > 0 || season.episodeCount === 0) ? season : undefined;
+  return useQuery({
+    queryKey: qk.episodes(titleId ?? "", season?.seasonNumber ?? -1),
+    queryFn: () => api<SeasonDto>(`/titles/${encodeURIComponent(titleId!)}/episodes`, { query: { season: season!.seasonNumber } }),
+    enabled: enabled && !!titleId && !!season,
+    // Embedded data counts as fresh (staleTime); progress refreshes when the season is reopened later
+    initialData: embedded,
+    staleTime: 30_000,
   });
 }
 

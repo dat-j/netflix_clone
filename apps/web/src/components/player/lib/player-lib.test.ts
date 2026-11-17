@@ -25,7 +25,7 @@ describe("format", () => {
     expect(qualityName(1080)).toBe("1080p (Full HD)");
     expect(qualityName(480)).toBe("480p");
     expect(clamp(5, 0, 3)).toBe(3);
-    expect(episodeLabel({ seasonNumber: 1, episodeNumber: 3, name: "Khởi đầu" })).toBe("T1:E3 “Khởi đầu”");
+    expect(episodeLabel({ seasonNumber: 1, episodeNumber: 3, name: "Khởi đầu" })).toBe("T1:E3 · Khởi đầu");
     expect(episodeLabel(null)).toBeNull();
   });
 });
@@ -122,7 +122,7 @@ describe("keymap", () => {
 describe("prefs", () => {
   it("sanitizes stored prefs", () => {
     expect(sanitizePrefs({ volume: 3, muted: "x", rate: 7, qualityHeight: 720 })).toEqual({
-      volume: 1, muted: false, rate: 1, qualityHeight: 720, subtitleLang: null,
+      volume: 1, muted: false, rate: 1, qualityHeight: 720, subtitleLang: null, subtitlesOff: false, audioLang: null,
     });
     expect(sanitizePrefs(null).volume).toBe(1);
     expect(sanitizePrefs({ volume: 0.4, rate: 1.5, muted: true }).rate).toBe(1.5);

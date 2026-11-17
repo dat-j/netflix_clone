@@ -69,8 +69,8 @@ test("subtitles: menu lists tracks, cues render as custom styled text, C toggles
     const res = await route.fetch();
     const body = (await res.json()) as PlaybackSession;
     body.subtitles = [
-      { id: "vi", language: "vi", label: "Tiếng Việt", url: "http://localhost:3000/__e2e/subs-vi.vtt", isDefault: false },
-      { id: "en", language: "en", label: "English", url: "http://localhost:3000/__e2e/subs-vi.vtt", isDefault: false },
+      { id: "vi", language: "vi", label: "Tiếng Việt", url: "http://localhost:3000/__e2e/subs-vi.vtt", isDefault: false, isForced: false },
+      { id: "en", language: "en", label: "English", url: "http://localhost:3000/__e2e/subs-vi.vtt", isDefault: false, isForced: false },
     ];
     await route.fulfill({ response: res, json: body });
   });

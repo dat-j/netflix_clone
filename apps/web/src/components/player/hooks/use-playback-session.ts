@@ -76,13 +76,17 @@ function toSessionError(e: unknown): SessionError {
 
 export function usePlaybackSession(
   titleId: string,
-  episodeId: string | null,
+  initialEpisodeId: string | null,
   /** Snapshot for the final heartbeat when the player goes away */
   getFinalBeat: () => HeartbeatBody | null,
 ) {
   const [attempt, setAttempt] = useState(0);
+  /** Episode being played; changes in place when the player moves to another episode (no remount) */
+  const [episodeId, setEpisodeId] = useState(initialEpisodeId);
   const [state, setState] = useState<SessionState>({ status: "loading", session: null, error: null });
   const current = useRef<PlaybackSession | null>(null);
+  /** Sessions already ended explicitly (episode switch) — the effect cleanup must not end them again */
+  const endedExplicitly = useRef(new Set<string>());
   const finalBeat = useRef(getFinalBeat);
   useEffect(() => {
     finalBeat.current = getFinalBeat;
@@ -90,6 +94,7 @@ export function usePlaybackSession(
 
   useEffect(() => {
     let cancelled = false;
+    const explicit = endedExplicitly.current;
     const key = `${titleId}|${episodeId ?? ""}|${attempt}`;
     const p = startSession(key, { titleId, ...(episodeId ? { episodeId } : {}) });
     p.then(
@@ -106,7 +111,10 @@ export function usePlaybackSession(
     return () => {
       cancelled = true;
       p.then(
-        (s) => scheduleEnd(s.sessionId, current.current?.sessionId === s.sessionId ? finalBeat.current() : null),
+        (s) => {
+          if (explicit.has(s.sessionId)) return;
+          scheduleEnd(s.sessionId, current.current?.sessionId === s.sessionId ? finalBeat.current() : null);
+        },
         () => undefined,
       );
     };
@@ -132,16 +140,43 @@ export function usePlaybackSession(
   }, []);
 
   /**
+   * Move to another episode without unmounting the player: report the final position of the current
+   * session and END it first (frees the concurrent-stream slot), then mint the next session.
+   */
+  const switchEpisode = useCallback(async (nextEpisodeId: string) => {
+    const old = current.current;
+    current.current = null;
+    if (old) {
+      endedExplicitly.current.add(old.sessionId);
+      const beat = finalBeat.current();
+      if (beat) {
+        await fetch(buildUrl(`/playback/sessions/${old.sessionId}/heartbeat`), {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(beat),
+        }).catch(() => undefined);
+      }
+      await fetch(buildUrl(`/playback/sessions/${old.sessionId}`), { method: "DELETE", credentials: "include" }).catch(() => undefined);
+    }
+    setState({ status: "loading", session: null, error: null });
+    setEpisodeId(nextEpisodeId);
+  }, []);
+
+  /**
    * Mint a replacement session without unmounting the player (token expiry). Ends the old one
    * first so we don't need a spare concurrent-stream slot.
    */
   const renew = useCallback(async (): Promise<PlaybackSession> => {
     const old = current.current;
     if (old) {
+      endedExplicitly.current.add(old.sessionId);
       await fetch(buildUrl(`/playback/sessions/${old.sessionId}`), { method: "DELETE", credentials: "include" }).catch(() => undefined);
     }
+    // Keep playing the same episode even when the URL had none (API-picked "xem tiếp" episode)
+    const ep = episodeId ?? old?.episode?.id ?? null;
     try {
-      const s = await api<PlaybackSession>("/playback/sessions", { method: "POST", body: { titleId, ...(episodeId ? { episodeId } : {}) } });
+      const s = await api<PlaybackSession>("/playback/sessions", { method: "POST", body: { titleId, ...(ep ? { episodeId: ep } : {}) } });
       current.current = s;
       setState({ status: "ready", session: s, error: null });
       return s;
@@ -152,5 +187,5 @@ export function usePlaybackSession(
     }
   }, [titleId, episodeId]);
 
-  return { ...state, retry, renew };
+  return { ...state, episodeId, retry, renew, switchEpisode };
 }

@@ -3,15 +3,18 @@
  * Pure w.r.t. Telegram (no API calls) — the presenter in bot.ts sends or edits them.
  */
 import { InlineKeyboard } from "grammy";
-import type { Catalog, TitleCard, TitleDetail } from "./catalog.js";
-import { encode, type ListRef } from "./lib/callback.js";
-import { cardMeta, detailCaption, lengthLabel, listCaption, qualityLabel, runtimeShort, typeLabel } from "./lib/format.js";
+import type { Catalog, EpisodeInfo, SeasonInfo, TitleCard, TitleDetail } from "./catalog.js";
+import { encode, type ListPos, type ListRef } from "./lib/callback.js";
+import {
+  cardMeta, detailCaption, episodeCaption, episodeCode, episodesCaption, firstEpisode, lengthLabel, listCaption, qualityLabel,
+  runtimeLabel, runtimeShort, seasonLabel, typeLabel,
+} from "./lib/format.js";
 import { miniAppUrl, paths, type AppPath } from "./lib/links.js";
-import { paginate, PAGE_SIZE } from "./lib/pagination.js";
+import { pageOf, paginate, PAGE_SIZE, windowAround } from "./lib/pagination.js";
 import type { SearchStore } from "./lib/search-store.js";
 import { escapeHtml as e, truncate } from "./lib/text.js";
 import { hashKey, type PhotoRef, type PhotoService } from "./photos.js";
-import { renderBanner, renderDetail, renderGrid } from "./render/render.js";
+import { renderBanner, renderDetail, renderEpisode, renderEpisodeGrid, renderGrid } from "./render/render.js";
 
 export interface Screen {
   photo: PhotoRef;
@@ -29,6 +32,15 @@ export interface ScreenDeps {
 }
 
 export const GENRES_PER_PAGE = 16;
+/** Episode picker: 3 buttons per row × 4 rows (matches the 3-column still grid in the photo). */
+export const EPISODES_PER_PAGE = 12;
+export const EPISODES_PER_ROW = 3;
+/** Season selector: up to this many seasons fit in one row; more are shown 3 at a time with « » arrows. */
+export const SEASONS_INLINE = 5;
+export const SEASON_WINDOW = 3;
+
+/** A screen plus an optional toast (e.g. when a stale button had to fall back to a nearby screen). */
+export interface ScreenResult { screen: Screen; toast?: string }
 
 interface ListMeta { heading: string; emoji: string; subtitle?: string; webPath: AppPath; query?: string }
 
@@ -174,13 +186,143 @@ export class Screens {
       },
     };
     const titlePath = paths.title(t.slug);
-    const kb = new InlineKeyboard()
-      .webApp({ text: "▶ Xem ngay", style: "primary" }, this.app(t.playable ? paths.watch(t.id) : titlePath)).row()
-      .webApp("ℹ️ Chi tiết", this.app(titlePath))
-      .webApp("❤️ Thêm vào yêu thích", this.app(titlePath)).row();
+    const kb = new InlineKeyboard();
+    if (t.type === "SERIES") {
+      // The bot has no viewer session: /watch/<titleId> without an episode lets the API pick the profile's resume
+      // episode (or the first one), so the label names the generic starting point.
+      const start = firstEpisode(t);
+      const label = t.playable && start ? `▶ Xem ngay (${episodeCode(start.season.seasonNumber, start.episode.episodeNumber)})` : "▶ Xem ngay";
+      kb.webApp({ text: label, style: "primary" }, this.app(t.playable ? paths.watch(t.id) : titlePath)).row();
+      if (start) kb.text("📃 Danh sách tập", encode({ a: "episodes", id: t.id, season: start.season.seasonNumber, page: 1, back })).row();
+      kb.webApp("ℹ️ Chi tiết", this.app(titlePath)).webApp("❤️ Yêu thích", this.app(titlePath)).row();
+    } else {
+      kb.webApp({ text: "▶ Xem ngay", style: "primary" }, this.app(t.playable ? paths.watch(t.id) : titlePath)).row()
+        .webApp("ℹ️ Chi tiết", this.app(titlePath))
+        .webApp("❤️ Thêm vào yêu thích", this.app(titlePath)).row();
+    }
     if (back) kb.text("↩ Quay lại", encode({ a: "list", list: back.list, page: back.page }));
     this.homeRow(kb);
     return { photo, caption: detailCaption(t), keyboard: kb };
+  }
+
+  // ───────── series: episode picker / episode card ─────────
+
+  /**
+   * Episode picker for one season. Stale input degrades gracefully: unknown season → first season (with a toast),
+   * a series without published episodes (or a movie) → its detail screen. null only when the title itself is gone.
+   */
+  async episodes(id: string, seasonNumber: number, page: number, back?: ListPos): Promise<ScreenResult | null> {
+    const t = await this.d.catalog.detail(id);
+    if (!t) return null;
+    if (t.type !== "SERIES" || !t.seasons.length) {
+      return { screen: this.detailFor(t, back), toast: t.type === "SERIES" ? "Phim này chưa có tập nào được phát hành." : undefined };
+    }
+    let season = t.seasons.find((s) => s.seasonNumber === seasonNumber);
+    let toast: string | undefined;
+    if (!season) {
+      season = t.seasons[0]!;
+      toast = `Mùa này hiện không có, đã chuyển sang ${seasonLabel(season.seasonNumber)}.`;
+    }
+    return { screen: this.episodesFor(t, season, page, back), toast };
+  }
+
+  episodesFor(t: TitleDetail, season: SeasonInfo, page: number, back?: ListPos): Screen {
+    const p = paginate(season.episodes.length, page, EPISODES_PER_PAGE);
+    const eps = season.episodes.slice(p.start, p.end);
+    const sLabel = seasonLabel(season.seasonNumber);
+    const pageLabel = p.totalPages > 1 ? `Trang ${p.page}/${p.totalPages}` : null;
+    const tiles = eps.map((ep) => ({ ep, meta: [runtimeShort(ep.runtimeMinutes), ep.playable ? null : "Sắp có"].filter(Boolean).join(" · ") || null }));
+    const photo: PhotoRef = {
+      key: hashKey(["episodes", t.id, t.name, t.backdropKey, sLabel, pageLabel,
+        ...tiles.flatMap(({ ep, meta }) => [ep.episodeNumber, ep.name, ep.stillKey, ep.playable ? 1 : 0, meta])]),
+      render: async () =>
+        renderEpisodeGrid({
+          seriesName: t.name,
+          seasonLabel: sLabel,
+          pageLabel,
+          backdrop: await this.d.photos.loadArt(t.backdropKey ?? t.posterKey),
+          tiles: await Promise.all(tiles.map(async ({ ep, meta }) => ({
+            number: ep.episodeNumber, name: ep.name, meta, playable: ep.playable, still: await this.d.photos.loadArt(ep.stillKey),
+          }))),
+        }),
+    };
+
+    const kb = new InlineKeyboard();
+    // season selector
+    if (t.seasons.length > 1) {
+      const idx = t.seasons.indexOf(season);
+      const w = t.seasons.length <= SEASONS_INLINE ? windowAround(t.seasons.length, idx, SEASONS_INLINE) : windowAround(t.seasons.length, idx, SEASON_WINDOW);
+      const to = (s: SeasonInfo) => encode({ a: "episodes", id: t.id, season: s.seasonNumber, page: 1, back });
+      if (w.prevStart !== null) kb.text("«", to(t.seasons[w.prevStart]!));
+      for (const s of t.seasons.slice(w.start, w.end)) {
+        kb.text(s === season ? `• ${seasonLabel(s.seasonNumber)} •` : seasonLabel(s.seasonNumber), s === season ? encode({ a: "noop" }) : to(s));
+      }
+      if (w.nextStart !== null) kb.text("»", to(t.seasons[w.nextStart]!));
+      kb.row();
+    }
+    // episode grid
+    eps.forEach((ep, i) => {
+      kb.text(`Tập ${ep.episodeNumber}${ep.playable ? "" : " ⏳"}`,
+        encode({ a: "episode", id: t.id, season: season.seasonNumber, episode: ep.episodeNumber, back }));
+      if (i % EPISODES_PER_ROW === EPISODES_PER_ROW - 1) kb.row();
+    });
+    if (eps.length % EPISODES_PER_ROW) kb.row();
+    if (p.totalPages > 1) {
+      const at = (n: number) => encode({ a: "episodes", id: t.id, season: season.seasonNumber, page: n, back });
+      kb.text("◀ Trước", at(p.prev)).text(`${p.page}/${p.totalPages}`, encode({ a: "noop" })).text("Tiếp ▶", at(p.next)).row();
+    }
+    kb.text("↩ Quay lại", encode({ a: "detail", id: t.id, back }));
+    this.homeRow(kb);
+    return { photo, caption: episodesCaption(t, season, p), keyboard: kb };
+  }
+
+  /** One episode. Unknown/unpublished episode → the season's picker (or detail) with a toast; null if the title is gone. */
+  async episode(id: string, seasonNumber: number, episodeNumber: number, back?: ListPos): Promise<ScreenResult | null> {
+    const t = await this.d.catalog.detail(id);
+    if (!t) return null;
+    const season = t.seasons.find((s) => s.seasonNumber === seasonNumber);
+    const ep = season?.episodes.find((x) => x.episodeNumber === episodeNumber);
+    if (!season || !ep) {
+      const fallback = await this.episodes(id, seasonNumber, 1, back);
+      return fallback && { screen: fallback.screen, toast: "Tập này hiện không có trên BoxPhim." };
+    }
+    return { screen: this.episodeFor(t, season, ep, back) };
+  }
+
+  /** The episode after `ep` in watch order (crosses into the next season); null after the last one. */
+  static nextEpisode(t: TitleDetail, season: SeasonInfo, ep: EpisodeInfo): { season: SeasonInfo; episode: EpisodeInfo } | null {
+    const i = season.episodes.indexOf(ep);
+    if (i >= 0 && i + 1 < season.episodes.length) return { season, episode: season.episodes[i + 1]! };
+    const nextSeason = t.seasons[t.seasons.indexOf(season) + 1];
+    return nextSeason?.episodes[0] ? { season: nextSeason, episode: nextSeason.episodes[0] } : null;
+  }
+
+  episodeFor(t: TitleDetail, season: SeasonInfo, ep: EpisodeInfo, back?: ListPos): Screen {
+    const chips = [runtimeLabel(ep.runtimeMinutes), t.maturityRating, ep.playable ? qualityLabel(t.maxHeight) : null].filter((x): x is string => !!x);
+    const code = episodeCode(season.seasonNumber, ep.episodeNumber);
+    const named = ep.name?.trim() && !/^(tập|episode)\s*\d+$/i.test(ep.name.trim()) ? ep.name.trim() : null;
+    const photo: PhotoRef = {
+      key: hashKey(["episode", t.id, ep.id, t.name, code, named, ep.stillKey, t.backdropKey, ep.playable ? 1 : 0, ep.overview, ...chips]),
+      render: async () => {
+        const [still, backdrop] = await Promise.all([this.d.photos.loadArt(ep.stillKey), this.d.photos.loadArt(t.backdropKey ?? t.posterKey)]);
+        return renderEpisode({ seriesName: t.name, code, name: named, still, backdrop, chips, playable: ep.playable, overview: ep.overview });
+      },
+    };
+    const titlePath = paths.title(t.slug);
+    const kb = new InlineKeyboard();
+    if (ep.playable) kb.webApp({ text: "▶ Xem tập này", style: "primary" }, this.app(paths.episode(t.id, ep.id, t.slug))).row();
+    else kb.webApp("⏳ Tập này sắp có", this.app(titlePath)).row();
+    const next = Screens.nextEpisode(t, season, ep);
+    if (next) {
+      const label = next.season === season ? "⏭ Tập tiếp theo" : `⏭ Tập tiếp theo (${seasonLabel(next.season.seasonNumber)})`;
+      kb.text(label, encode({ a: "episode", id: t.id, season: next.season.seasonNumber, episode: next.episode.episodeNumber, back })).row();
+    }
+    kb.text("📃 Danh sách tập", encode({
+      a: "episodes", id: t.id, season: season.seasonNumber, page: pageOf(season.episodes.indexOf(ep), EPISODES_PER_PAGE), back,
+    }))
+      .text("↩ Quay lại", encode({ a: "detail", id: t.id, back })).row();
+    this.homeRow(kb);
+    return { photo, caption: episodeCaption(t, season, ep), keyboard: kb };
   }
 
   // ───────── genres / help / search prompt ─────────

@@ -18,7 +18,10 @@ const base = {
   outDir: "/w/out",
   keyInfoPath: "/w/secret/enc.keyinfo",
   videoStreamIndex: 0,
-  audioStreamIndex: 2,
+  audio: [
+    { streamIndex: 1, name: "audio_1_en", kbps: 128 },
+    { streamIndex: 2, name: "audio_2_vi", kbps: 128 },
+  ],
   sourceFrameRate: 30,
   hdr: false,
   preset: "veryfast",
@@ -36,9 +39,15 @@ describe("buildTranscodeArgs", () => {
     expect(args.filter((a) => a === "-i")).toHaveLength(1);
   });
 
-  it("maps video+audio per variant and names variants via var_stream_map", () => {
-    expect(arg(args, "-var_stream_map")).toBe("v:0,a:0,name:360p v:1,a:1,name:480p v:2,a:2,name:720p v:3,a:3,name:1080p");
-    expect(args.filter((a) => a === "0:2")).toHaveLength(4);
+  it("video-only variants + one audio-only variant per source track (demuxed), named via var_stream_map", () => {
+    expect(arg(args, "-var_stream_map")).toBe(
+      "v:0,name:360p v:1,name:480p v:2,name:720p v:3,name:1080p a:0,name:audio_1_en a:1,name:audio_2_vi",
+    );
+    // each source audio stream is mapped (and encoded) exactly once, after the video branches
+    expect(args.filter((a) => a === "0:1")).toHaveLength(1);
+    expect(args.filter((a) => a === "0:2")).toHaveLength(1);
+    const maps = args.flatMap((a, i) => (a === "-map" ? [args[i + 1]] : []));
+    expect(maps).toEqual(["[v0]", "[v1]", "[v2]", "[v3]", "0:1", "0:2"]);
     expect(args.at(-1)).toBe("/w/out/%v/index.m3u8");
     expect(arg(args, "-hls_segment_filename")).toBe("/w/out/%v/seg_%05d.ts");
   });
@@ -64,8 +73,9 @@ describe("buildTranscodeArgs", () => {
     expect(arg(args, "-maxrate:v:3")).toBe("5500k");
     expect(arg(args, "-bufsize:v:3")).toBe("7500k");
     expect(arg(args, "-level:v:3")).toBe("4.0");
-    expect(arg(args, "-b:a:0")).toBe("96k");
-    expect(arg(args, "-b:a:3")).toBe("192k");
+    expect(arg(args, "-b:a:0")).toBe("128k");
+    expect(arg(args, "-b:a:1")).toBe("128k");
+    expect(args).not.toContain("-b:a:2");
     expect(arg(args, "-ac")).toBe("2");
     expect(arg(args, "-hls_key_info_file")).toBe("/w/secret/enc.keyinfo");
   });
@@ -80,7 +90,7 @@ describe("buildTranscodeArgs", () => {
   });
 
   it("video-only sources have no audio maps", () => {
-    const a = buildTranscodeArgs({ ...base, renditions, audioStreamIndex: null });
+    const a = buildTranscodeArgs({ ...base, renditions, audio: [] });
     expect(arg(a, "-var_stream_map")).toBe("v:0,name:360p v:1,name:480p v:2,name:720p v:3,name:1080p");
     expect(a).not.toContain("-c:a");
   });
@@ -153,22 +163,55 @@ describe("variant stats + master playlist", () => {
         { rendition: r720!, bandwidth: 3_200_000, averageBandwidth: 2_900_000 },
         { rendition: r360!, bandwidth: 950_000, averageBandwidth: 880_000 },
       ],
-      { frameRate: 25, hasAudio: true },
+      { frameRate: 25, audio: [] },
     );
     expect(m).toBe(
       [
         "#EXTM3U",
         "#EXT-X-VERSION:3",
         "#EXT-X-INDEPENDENT-SEGMENTS",
-        '#EXT-X-STREAM-INF:BANDWIDTH=950000,AVERAGE-BANDWIDTH=880000,RESOLUTION=640x360,CODECS="avc1.64001e,mp4a.40.2",FRAME-RATE=25.000',
+        '#EXT-X-STREAM-INF:BANDWIDTH=950000,AVERAGE-BANDWIDTH=880000,RESOLUTION=640x360,CODECS="avc1.64001e",FRAME-RATE=25.000',
         "360p/index.m3u8",
-        '#EXT-X-STREAM-INF:BANDWIDTH=3200000,AVERAGE-BANDWIDTH=2900000,RESOLUTION=1280x720,CODECS="avc1.64001f,mp4a.40.2",FRAME-RATE=25.000',
+        '#EXT-X-STREAM-INF:BANDWIDTH=3200000,AVERAGE-BANDWIDTH=2900000,RESOLUTION=1280x720,CODECS="avc1.64001f",FRAME-RATE=25.000',
         "720p/index.m3u8",
         "",
       ].join("\n"),
     );
-    expect(buildMasterPlaylist([{ rendition: r360!, bandwidth: 1, averageBandwidth: 1 }], { frameRate: 29.97, hasAudio: false })).toContain(
+    expect(buildMasterPlaylist([{ rendition: r360!, bandwidth: 1, averageBandwidth: 1 }], { frameRate: 29.97, audio: [] })).toContain(
       'CODECS="avc1.64001e",FRAME-RATE=29.970',
+    );
+  });
+
+  it("audio group: EXT-X-MEDIA per track (one DEFAULT), variants reference it and include audio bandwidth", () => {
+    const [r360, , r720] = selectRenditions(1280, 720, 25);
+    const m = buildMasterPlaylist(
+      [
+        { rendition: r360!, bandwidth: 950_000, averageBandwidth: 880_000 },
+        { rendition: r720!, bandwidth: 3_200_000, averageBandwidth: 2_900_000 },
+      ],
+      {
+        frameRate: 25,
+        audio: [
+          { name: "audio_1_en", language: "en", label: "English", channels: 2, isDefault: false, bandwidth: 140_000, averageBandwidth: 131_000 },
+          { name: "audio_2_vi", language: "vi", label: "Tiếng Việt", channels: 2, isDefault: true, bandwidth: 150_000, averageBandwidth: 132_000 },
+          { name: "audio_3_und", language: "und", label: 'Bad "name"', channels: 2, isDefault: true, bandwidth: 100_000, averageBandwidth: 90_000 },
+        ],
+      },
+    );
+    expect(m).toBe(
+      [
+        "#EXTM3U",
+        "#EXT-X-VERSION:3",
+        "#EXT-X-INDEPENDENT-SEGMENTS",
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,CHANNELS="2",URI="audio_1_en/index.m3u8"',
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Tiếng Việt",LANGUAGE="vi",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2",URI="audio_2_vi/index.m3u8"',
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Bad name",DEFAULT=NO,AUTOSELECT=YES,CHANNELS="2",URI="audio_3_und/index.m3u8"',
+        '#EXT-X-STREAM-INF:BANDWIDTH=1100000,AVERAGE-BANDWIDTH=1012000,RESOLUTION=640x360,CODECS="avc1.64001e,mp4a.40.2",FRAME-RATE=25.000,AUDIO="aud"',
+        "360p/index.m3u8",
+        '#EXT-X-STREAM-INF:BANDWIDTH=3350000,AVERAGE-BANDWIDTH=3032000,RESOLUTION=1280x720,CODECS="avc1.64001f,mp4a.40.2",FRAME-RATE=25.000,AUDIO="aud"',
+        "720p/index.m3u8",
+        "",
+      ].join("\n"),
     );
   });
 });

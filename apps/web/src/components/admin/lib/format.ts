@@ -118,3 +118,26 @@ export function basename(key: string | null | undefined): string {
   const i = key.lastIndexOf("/");
   return i >= 0 ? key.slice(i + 1) : key;
 }
+
+/** Giây → "m:ss" cho ô nhập mốc thời gian (≥ 1 giờ: "h:mm:ss"); null → "". */
+export function formatMmSs(sec: number | null | undefined): string {
+  if (sec === null || sec === undefined || !Number.isFinite(sec) || sec < 0) return "";
+  return formatDuration(sec);
+}
+
+/**
+ * "1:30" / "01:02:03" / "90" (giây) → số giây; chuỗi rỗng → null; sai định dạng → undefined.
+ * Phút/giây ở vị trí sau phải < 60.
+ */
+export function parseMmSs(input: string): number | null | undefined {
+  const s = input.trim();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) return Number(s);
+  const m = /^(?:(\d+):)?(\d{1,2}):(\d{1,2})$/.exec(s);
+  if (!m) return undefined;
+  const h = m[1] ? Number(m[1]) : 0;
+  const min = Number(m[2]);
+  const sec = Number(m[3]);
+  if (sec >= 60 || (m[1] && min >= 60)) return undefined;
+  return h * 3600 + min * 60 + sec;
+}

@@ -3,10 +3,12 @@ import { AdminContentController } from "./admin-content.controller.js";
 import { AdminTitlesService } from "./admin-titles.service.js";
 import { AdminCatalogService } from "./admin-catalog.service.js";
 import { MediaQueuesService } from "./queues.service.js";
+import { AdminSeriesController } from "./admin-series.controller.js";
+import { AdminSeriesService } from "./admin-series.service.js";
 
 @Module({
-  controllers: [AdminContentController],
-  providers: [AdminTitlesService, AdminCatalogService, MediaQueuesService],
-  exports: [AdminTitlesService, AdminCatalogService, MediaQueuesService],
+  controllers: [AdminContentController, AdminSeriesController],
+  providers: [AdminTitlesService, AdminSeriesService, AdminCatalogService, MediaQueuesService],
+  exports: [AdminTitlesService, AdminSeriesService, AdminCatalogService, MediaQueuesService],
 })
 export class AdminContentModule {}

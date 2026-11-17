@@ -14,10 +14,16 @@ import { SourceFilePickerDialog } from "./source-file-picker";
 
 // ───────── Media ─────────
 export function MediaPanel({ title }: { title: AdminTitle }) {
+  const series = title.type === "SERIES";
   return (
     <Card title="Media">
       <div className="divide-y divide-zinc-100">
-        <AssetRow title={title} kind="MAIN" asset={title.mainAsset} />
+        {/* Phim bộ: video nằm ở từng tập (mục “Mùa & tập”); title chỉ cần preview */}
+        {series ? (
+          <p className="px-4 py-3 text-xs text-zinc-500">Video của phim bộ được gắn cho từng tập ở mục “Mùa &amp; tập” bên dưới.</p>
+        ) : (
+          <AssetRow title={title} kind="MAIN" asset={title.mainAsset} />
+        )}
         <AssetRow title={title} kind="PREVIEW" asset={title.previewAsset} />
       </div>
     </Card>

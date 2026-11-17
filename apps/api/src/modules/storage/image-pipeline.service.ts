@@ -38,12 +38,27 @@ export class ImagePipelineService {
   async saveTitleImage(titleId: string, kind: ImageKind, input: Buffer, opts: { language?: string | null } = {}): Promise<Image> {
     const img = await this.process(input, kind);
     const key = mediaLayout.titleImage(titleId, `${kind.toLowerCase()}-${randomBytes(4).toString("hex")}.webp`);
+    return this.store({ titleId, kind }, key, img, opts.language ?? null);
+  }
+
+  /** Ảnh still của một tập: `images/<titleId>/ep-<episodeId>-still-<rand>.webp`, gắn với tập (titleId của Image = null). */
+  async saveEpisodeStill(titleId: string, episodeId: string, input: Buffer): Promise<Image> {
+    const img = await this.process(input, "STILL");
+    const key = mediaLayout.titleImage(titleId, `ep-${episodeId}-still-${randomBytes(4).toString("hex")}.webp`);
+    return this.store({ episodeId, kind: "STILL" }, key, img, null);
+  }
+
+  private async store(owner: { titleId?: string; episodeId?: string; kind: ImageKind }, key: string, img: ProcessedImage, language: string | null): Promise<Image> {
     await this.storage.putMedia(key, img.buffer, "image/webp");
-    const old = await this.prisma.image.findMany({ where: { titleId, kind }, select: { id: true, key: true } });
+    const where = owner.episodeId ? { episodeId: owner.episodeId, kind: owner.kind } : { titleId: owner.titleId!, kind: owner.kind };
+    const old = await this.prisma.image.findMany({ where, select: { id: true, key: true } });
     const created = await this.prisma.$transaction(async (tx) => {
-      await tx.image.updateMany({ where: { titleId, kind }, data: { isPrimary: false } });
+      await tx.image.updateMany({ where, data: { isPrimary: false } });
       return tx.image.create({
-        data: { titleId, kind, key, width: img.width, height: img.height, blurData: img.blur, language: opts.language ?? null, isPrimary: true },
+        data: {
+          titleId: owner.titleId ?? null, episodeId: owner.episodeId ?? null, kind: owner.kind, key,
+          width: img.width, height: img.height, blurData: img.blur, language, isPrimary: true,
+        },
       });
     });
     // MVP: mỗi loại chỉ giữ một ảnh → dọn ảnh cũ

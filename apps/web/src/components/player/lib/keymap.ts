@@ -8,6 +8,10 @@ export type PlayerCommand =
   | { type: "toggleMute" }
   | { type: "toggleFullscreen" }
   | { type: "toggleCaptions" }
+  /** Series: start the next episode now */
+  | { type: "nextEpisode" }
+  /** Series: jump past the intro (only while the skip button is offered) */
+  | { type: "skipIntro" }
   | { type: "escape" };
 
 export interface KeyLike {
@@ -47,6 +51,10 @@ export function commandForKey(e: KeyLike): PlayerCommand | null {
       return { type: "toggleFullscreen" };
     case "c":
       return { type: "toggleCaptions" };
+    case "n":
+      return { type: "nextEpisode" };
+    case "s":
+      return { type: "skipIntro" };
     case "Escape":
       return { type: "escape" };
     case "Home":

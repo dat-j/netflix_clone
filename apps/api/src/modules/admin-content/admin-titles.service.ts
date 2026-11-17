@@ -25,13 +25,26 @@ export const adminTitleInclude = {
   images: { orderBy: [{ kind: "asc" }, { createdAt: "desc" }] },
   mainAsset: { include: assetInclude },
   previewAsset: { include: assetInclude },
+  _count: { select: { seasons: true, episodes: true } },
 } satisfies Prisma.TitleInclude;
 type AdminTitleRow = Prisma.TitleGetPayload<{ include: typeof adminTitleInclude }>;
 
 /** Trường metadata mà đồng bộ TMDB có thể ghi; admin sửa tay → ghi vào overriddenFields. */
 export const SYNCABLE_FIELDS = ["name", "originalName", "tagline", "overview", "releaseDate", "runtimeMinutes", "maturityRating", "countries", "genres"] as const;
 
-const toDate = (s: string | null | undefined) => (s ? new Date(`${s.slice(0, 10)}T00:00:00Z`) : s === null ? null : undefined);
+/** Kiểm tra file upload + chạy pipeline ảnh; lỗi đọc ảnh → 400. */
+export async function saveUploadedImage<T>(file: { buffer: Buffer; mimetype: string } | undefined, save: (buf: Buffer) => Promise<T>): Promise<T> {
+  if (!file?.buffer?.length) throw new ApiException(400, "VALIDATION", "Thiếu file ảnh");
+  if (!file.mimetype.startsWith("image/")) throw new ApiException(400, "VALIDATION", "File không phải ảnh");
+  try {
+    return await save(file.buffer);
+  } catch (err) {
+    if (err instanceof ApiException) throw err;
+    throw new ApiException(400, "VALIDATION", `Không đọc được ảnh: ${(err as Error).message}`);
+  }
+}
+
+export const toDate = (s: string | null | undefined) => (s ? new Date(`${s.slice(0, 10)}T00:00:00Z`) : s === null ? null : undefined);
 
 @Injectable()
 export class AdminTitlesService {
@@ -45,7 +58,14 @@ export class AdminTitlesService {
     @Inject(StorageService) private readonly storage: StorageService,
   ) {}
 
-  toAdminTitle(t: AdminTitleRow): AdminTitle {
+  /** Số tập đã xuất bản theo title (một query cho cả trang). */
+  async publishedEpisodeCounts(titleIds: string[]): Promise<Map<string, number>> {
+    if (!titleIds.length) return new Map();
+    const rows = await this.prisma.episode.groupBy({ by: ["titleId"], where: { titleId: { in: titleIds }, status: "PUBLISHED" }, _count: { _all: true } });
+    return new Map(rows.map((r) => [r.titleId, r._count._all]));
+  }
+
+  toAdminTitle(t: AdminTitleRow, publishedEpisodeCount = 0): AdminTitle {
     return {
       id: t.id,
       slug: t.slug,
@@ -66,16 +86,20 @@ export class AdminTitlesService {
       images: t.images.map((i) => this.images.imageDto(i)),
       mainAsset: t.mainAsset ? toAssetDto(t.mainAsset, t.name) : null,
       previewAsset: t.previewAsset ? toAssetDto(t.previewAsset, t.name) : null,
+      seasonCount: t._count.seasons,
+      episodeCount: t._count.episodes,
+      publishedEpisodeCount,
       createdAt: t.createdAt.toISOString(),
       updatedAt: t.updatedAt.toISOString(),
     };
   }
 
   async get(id: string): Promise<AdminTitle> {
-    return this.toAdminTitle(await this.getRow(id));
+    const row = await this.getRow(id);
+    return this.toAdminTitle(row, (await this.publishedEpisodeCounts([id])).get(id) ?? 0);
   }
 
-  private async getRow(id: string): Promise<AdminTitleRow> {
+  async getRow(id: string): Promise<AdminTitleRow> {
     if (!UUID_RE.test(id)) throw new ApiException(404, "NOT_FOUND", "Không tìm thấy title");
     const t = await this.prisma.title.findUnique({ where: { id }, include: adminTitleInclude });
     if (!t) throw new ApiException(404, "NOT_FOUND", "Không tìm thấy title");
@@ -105,7 +129,8 @@ export class AdminTitlesService {
       this.prisma.title.count({ where }),
       this.prisma.title.findMany({ where, orderBy: { updatedAt: "desc" }, skip: p.skip, take: p.pageSize, include: adminTitleInclude }),
     ]);
-    return { items: rows.map((r) => this.toAdminTitle(r)), page: p.page, pageSize: p.pageSize, total, hasMore: p.skip + rows.length < total };
+    const published = await this.publishedEpisodeCounts(rows.filter((r) => r.type === "SERIES").map((r) => r.id));
+    return { items: rows.map((r) => this.toAdminTitle(r, published.get(r.id) ?? 0)), page: p.page, pageSize: p.pageSize, total, hasMore: p.skip + rows.length < total };
   }
 
   /** Slug duy nhất từ tên (tiếng Việt → ASCII). */
@@ -187,7 +212,7 @@ export class AdminTitlesService {
 
   async remove(id: string): Promise<void> {
     await this.getRow(id);
-    const imgs = await this.prisma.image.findMany({ where: { titleId: id }, select: { key: true } });
+    const imgs = await this.prisma.image.findMany({ where: { OR: [{ titleId: id }, { episode: { titleId: id } }] }, select: { key: true } });
     await this.prisma.title.delete({ where: { id } });
     await invalidateCatalogCache(this.redis);
     // Ảnh chỉ thuộc title này → dọn khỏi bucket (HLS giữ lại để tái sử dụng/audit)
@@ -198,9 +223,11 @@ export class AdminTitlesService {
   async publish(id: string, opts: { force?: boolean; publishedAt?: Date } = {}): Promise<AdminTitle> {
     const t = await this.getRow(id);
     if (!opts.force) {
+      // Phim lẻ: cần asset chính READY. Phim bộ: cần ≥ 1 tập PUBLISHED (title bộ cũ có asset chính READY vẫn được).
       let ready = t.mainAsset?.status === "READY";
       if (!ready && t.type === "SERIES") {
-        ready = (await this.prisma.episode.count({ where: { titleId: id, status: "PUBLISHED", mainAsset: { status: "READY" } } })) > 0;
+        ready = (await this.prisma.episode.count({ where: { titleId: id, status: "PUBLISHED" } })) > 0;
+        if (!ready) throw new ApiException(409, "CONFLICT", "Phim bộ cần ít nhất một tập đã xuất bản trước khi xuất bản");
       }
       if (!ready) throw new ApiException(409, "CONFLICT", "Cần asset chính ở trạng thái READY trước khi xuất bản");
     }
@@ -223,23 +250,35 @@ export class AdminTitlesService {
   async attachAsset(titleId: string, body: unknown): Promise<MediaAssetDto> {
     const input = parseBody(attachAssetBody, body);
     const title = await this.getRow(titleId);
-    const sf = await this.prisma.sourceFile.findUnique({ where: { id: input.sourceFileId } });
+    const kind: AssetKind = input.kind;
+    return this.createAssetAndEnqueue(input.sourceFileId, kind, title.name, (tx, assetId) =>
+      tx.title.update({ where: { id: titleId }, data: kind === "MAIN" ? { mainAssetId: assetId } : { previewAssetId: assetId } }));
+  }
+
+  /**
+   * Đường chung (title và tập phim): kiểm tra file nguồn → tạo MediaAsset + TranscodeJob trong một transaction
+   * (kèm `link` gắn asset vào chủ sở hữu) → đẩy job transcode (cùng tuỳ chọn retry/backoff).
+   */
+  async createAssetAndEnqueue(
+    sourceFileId: string, kind: AssetKind, displayName: string | null,
+    link: (tx: Prisma.TransactionClient, assetId: string) => Promise<unknown>,
+  ): Promise<MediaAssetDto> {
+    const sf = await this.prisma.sourceFile.findUnique({ where: { id: sourceFileId } });
     if (!sf) throw new ApiException(404, "NOT_FOUND", "Không tìm thấy file nguồn");
     if (sf.probeStatus === "FAILED" || sf.probeStatus === "SKIPPED") {
       throw new ApiException(409, "CONFLICT", `File nguồn không dùng được (probe ${sf.probeStatus}${sf.probeError ? `: ${sf.probeError}` : ""})`);
     }
-    const kind: AssetKind = input.kind;
     const { asset, job } = await this.prisma.$transaction(async (tx) => {
       const created = await tx.mediaAsset.create({ data: { sourceFileId: sf.id, kind, status: "QUEUED", durationSec: sf.durationSec } });
       const asset = await tx.mediaAsset.update({ where: { id: created.id }, data: { outputPrefix: mediaLayout.assetPrefix(created.id) } });
       const job = await tx.transcodeJob.create({ data: { assetId: asset.id, status: "QUEUED" } });
-      await tx.title.update({ where: { id: titleId }, data: kind === "MAIN" ? { mainAssetId: asset.id } : { previewAssetId: asset.id } });
+      await link(tx, asset.id);
       return { asset, job };
     });
     await this.enqueue(job.id, asset.id);
     await invalidateCatalogCache(this.redis);
     const row = await this.prisma.mediaAsset.findUniqueOrThrow({ where: { id: asset.id }, include: assetInclude });
-    return toAssetDto(row, title.name);
+    return toAssetDto(row, displayName);
   }
 
   private async enqueue(jobId: string, assetId: string, attempt = 0) {
@@ -258,15 +297,7 @@ export class AdminTitlesService {
     await this.getRow(titleId);
     const kind = String(kindRaw ?? "").toUpperCase() as ImageKind;
     if (!["POSTER", "BACKDROP", "LOGO", "STILL"].includes(kind)) throw new ApiException(400, "VALIDATION", "kind phải là POSTER, BACKDROP hoặc LOGO");
-    if (!file?.buffer?.length) throw new ApiException(400, "VALIDATION", "Thiếu file ảnh");
-    if (!file.mimetype.startsWith("image/")) throw new ApiException(400, "VALIDATION", "File không phải ảnh");
-    let img;
-    try {
-      img = await this.images.saveTitleImage(titleId, kind, file.buffer);
-    } catch (err) {
-      if (err instanceof ApiException) throw err;
-      throw new ApiException(400, "VALIDATION", `Không đọc được ảnh: ${(err as Error).message}`);
-    }
+    const img = await saveUploadedImage(file, (buf) => this.images.saveTitleImage(titleId, kind, buf));
     await invalidateCatalogCache(this.redis);
     return this.images.imageDto(img);
   }

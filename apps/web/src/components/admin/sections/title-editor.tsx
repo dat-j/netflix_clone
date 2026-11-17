@@ -14,9 +14,12 @@ import { Button, Card, EmptyState, ErrorState, Skeleton } from "../ui/primitives
 import { PublishBadge, TYPE_LABEL } from "../ui/status";
 import { TitleForm } from "./title-form";
 import { ImagesPanel, MediaPanel } from "./title-media";
+import { SeasonsPanel } from "./title-seasons";
+import { seriesPublishBlockReason } from "../lib/series";
 
 export function publishBlockReason(t: AdminTitle): string | null {
   if (t.status === "PUBLISHED") return null;
+  if (t.type === "SERIES") return seriesPublishBlockReason(t);
   if (!t.mainAsset) return "Chưa gắn video chính.";
   if (t.mainAsset.status !== "READY") return "Video chính chưa transcode xong (cần trạng thái Sẵn sàng).";
   return null;
@@ -135,7 +138,8 @@ export function TitleEditorSection({ id }: { id: string }) {
               size="sm"
               variant="primary"
               disabled={!!blocked}
-              title={blocked ?? undefined}
+              title={blocked ?? (t.type === "SERIES" ? "Chỉ các tập đã xuất bản mới hiển thị với người xem." : undefined)}
+              data-testid="title-publish"
               onClick={() => publish.mutate(true, { onError: (e) => toastError(e, "Không xuất bản được") })}
               loading={publish.isPending}
             >
@@ -146,10 +150,17 @@ export function TitleEditorSection({ id }: { id: string }) {
       </div>
 
       {blocked ? (
-        <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900" role="status">
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900" role="status" data-testid="publish-blocked">
           <Info className="mt-0.5 size-4 shrink-0" />
           <span>
             <span className="font-medium">Chưa thể xuất bản:</span> {blocked}
+          </span>
+        </div>
+      ) : t.type === "SERIES" && t.status !== "PUBLISHED" ? (
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-[13px] text-sky-900" role="status">
+          <Info className="mt-0.5 size-4 shrink-0" />
+          <span>
+            Phim bộ được xuất bản khi có ít nhất 1 tập đã xuất bản (hiện có {t.publishedEpisodeCount}/{t.episodeCount} tập). Người xem chỉ thấy các tập đã xuất bản.
           </span>
         </div>
       ) : null}
@@ -179,6 +190,11 @@ export function TitleEditorSection({ id }: { id: string }) {
           <ImagesPanel title={t} />
         </div>
       </div>
+      {t.type === "SERIES" ? (
+        <div className="mt-4">
+          <SeasonsPanel title={t} />
+        </div>
+      ) : null}
     </>
   );
 }

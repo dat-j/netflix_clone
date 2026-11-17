@@ -9,6 +9,7 @@ import { AdminTitlesService } from "../admin-content/admin-titles.service.js";
 import { slugify, pickUniqueSlug } from "../admin-content/slug.js";
 import { invalidateCatalogCache } from "../catalog/cache.js";
 import { TMDB_IMG, TmdbClient } from "./tmdb.client.js";
+import { IMPORT_STILL_BUDGET, TmdbSeasonsService } from "./tmdb-seasons.service.js";
 
 // ───────── kiểu dữ liệu TMDB (rút gọn) ─────────
 interface TmdbSearchItem {
@@ -63,6 +64,7 @@ export class TmdbService {
     @Inject(RedisService) private readonly redis: RedisService,
     @Inject(ImagePipelineService) private readonly images: ImagePipelineService,
     @Inject(AdminTitlesService) private readonly titles: AdminTitlesService,
+    @Inject(TmdbSeasonsService) private readonly seasons: TmdbSeasonsService,
   ) {}
 
   private kindPath(type: TitleType) {
@@ -249,6 +251,11 @@ export class TmdbService {
     );
     await this.syncCredits(created.id, type, vi);
     await this.syncImages(created.id, vi, en, false);
+    if (type === "SERIES") {
+      // Mùa/tập + một phần ảnh still (giới hạn); phần còn lại tải qua POST /admin/titles/:id/sync-tmdb-seasons.
+      await this.seasons.sync(created.id, { stillBudget: IMPORT_STILL_BUDGET })
+        .catch((err) => this.logger.warn(`Import mùa/tập TMDB cho ${created.id} lỗi: ${(err as Error).message}`));
+    }
     await invalidateCatalogCache(this.redis);
     return this.titles.get(created.id);
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import type { HeartbeatBody, TitleDetail } from "@app/shared";
+import type { EpisodeRef, HeartbeatBody, TitleDetail } from "@app/shared";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
@@ -13,9 +13,11 @@ import { PlayerEngine } from "./engine";
 import { useHeartbeat } from "./hooks/use-heartbeat";
 import { usePlaybackSession, type SessionError } from "./hooks/use-playback-session";
 import { useSubtitleCues, useThumbnails } from "./hooks/use-vtt";
-import { clamp } from "./lib/format";
+import { clamp, episodeLabel } from "./lib/format";
 import { commandForKey, isEditableTarget } from "./lib/keymap";
 import { loadPrefs, savePrefs } from "./lib/prefs";
+import { effectiveSubtitle, inIntro, initialSubtitleId, introWindow, pickAudioTrack, sameLang, selectableSubtitles } from "./lib/series";
+import { NextUpCard, SkipIntroButton } from "./series-overlays";
 import { BlockedOverlay, BufferingSpinner, CenterFeedback, EndScreen, IntroOverlay, PausedOverlay, SubtitleOverlay } from "./overlays";
 import { PlayerScreen, type ScreenKind } from "./screens";
 import { createPlayerStore, PlayerStoreContext, usePlayerStore, type MenuId, type PlayerStore } from "./store";
@@ -82,7 +84,8 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
   const fatal = usePlayerStore((s) => s.fatal);
   const chromeVisible = usePlayerStore((s) => s.chromeVisible || s.menu !== null);
   const started = usePlayerStore((s) => s.started);
-  const subtitleLang = usePlayerStore((s) => s.subtitleLang);
+  const subtitleId = usePlayerStore((s) => s.subtitleId);
+  const audioLang = usePlayerStore((s) => s.audioTracks.find((t) => t.id === s.activeAudioTrack)?.lang ?? null);
 
   const getBeat = useCallback((): HeartbeatBody | null => {
     const v = videoRef.current;
@@ -92,6 +95,8 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
 
   const sess = usePlaybackSession(titleId, episodeId, getBeat);
   const session = sess.session;
+  /** Episode whose media is currently loaded in the <video> (undefined = nothing loaded yet) */
+  const loadedEpisode = useRef<string | null | undefined>(undefined);
 
   const detailQuery = useQuery({
     queryKey: ["player", "title", titleId],
@@ -101,7 +106,12 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
   });
   const detail = detailQuery.data ?? null;
   const thumbnails = useThumbnails(session?.thumbnailsVttUrl);
-  const subtitleUrl = useMemo(() => session?.subtitles.find((s) => s.language === subtitleLang)?.url ?? null, [session, subtitleLang]);
+  const subtitleUrl = useMemo(() => {
+    if (!session) return null;
+    // With a single manifest audio track hls.js reports none: fall back to the session's audio metadata
+    const lang = audioLang ?? session.audioTracks.find((t) => t.isDefault)?.language ?? session.audioTracks[0]?.language ?? null;
+    return effectiveSubtitle(session.subtitles, subtitleId, lang)?.url ?? null;
+  }, [session, subtitleId, audioLang]);
   const { cues: subtitleCues } = useSubtitleCues(subtitleUrl);
 
   // ───────── chrome auto-hide ─────────
@@ -189,14 +199,43 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
     const autoplay = autoplayNext.current;
     autoplayNext.current = true;
     setSessionEnded(false);
+    const epId = session.episode?.id ?? null;
+    const st = store.getState();
+    if (loadedEpisode.current !== undefined && loadedEpisode.current !== epId) {
+      // Another episode in the same player: fresh media state, keep volume / speed / fullscreen
+      st.dispatch({ type: "RESET_MEDIA" });
+      st.setUi({ menu: null });
+    }
+    if (loadedEpisode.current !== epId) st.nextUpDispatch({ type: "RESET" });
+    loadedEpisode.current = epId;
     void engine.load(session.manifestUrl, start, autoplay);
-    // Initial subtitle choice: saved language, else the track flagged default
-    if (store.getState().subtitleLang === null && session.subtitles.length) {
-      const pref = loadPrefs().subtitleLang;
-      const pick = session.subtitles.find((s) => s.language === pref) ?? session.subtitles.find((s) => s.isDefault);
-      if (pick) store.getState().setUi({ subtitleLang: pick.language });
+
+    // Subtitle choice: keep the viewer's language across episodes / renewals, else saved preference → default track
+    const subs = selectableSubtitles(session.subtitles);
+    const prev = st.subtitleId;
+    if (!prev || !subs.some((x) => x.id === prev)) {
+      const prefs = loadPrefs();
+      st.setUi({ subtitleId: initialSubtitleId(session.subtitles, { lang: prefs.subtitleLang, off: prefs.subtitlesOff }) });
+    }
+
+    // API picked the episode (plain /watch/<id>): pin it in the URL so a reload resumes the same one
+    if (epId) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("episode") !== epId) {
+        url.searchParams.set("episode", epId);
+        window.history.replaceState(window.history.state, "", url.pathname + url.search);
+      }
     }
   }, [session, store]);
+
+  // Multi-audio: follow the saved audio language whenever a manifest exposes its tracks
+  useEffect(() => {
+    return store.subscribe((s, prev) => {
+      if (s.audioTracks === prev.audioTracks || s.audioTracks.length < 2) return;
+      const pick = pickAudioTrack(s.audioTracks, loadPrefs().audioLang, s.activeAudioTrack);
+      if (pick != null) engineRef.current?.setAudioTrack(pick);
+    });
+  }, [store]);
 
   // Expired signed URLs / access token → silently mint a new session and continue
   useEffect(() => {
@@ -251,6 +290,59 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
     store.getState().dispatch({ type: "RECOVERED" });
     retrySession();
   }, [retrySession, store]);
+
+  // ───────── series: switch episode in place ─────────
+  const { switchEpisode } = sess;
+  const playEpisode = useCallback(
+    (ep: string | Pick<EpisodeRef, "id">) => {
+      const id = typeof ep === "string" ? ep : ep.id;
+      const st = store.getState();
+      st.setUi({ menu: null });
+      if (id === sess.session?.episode?.id) return;
+      // Keep the <video> (and fullscreen) — only the source changes
+      engineRef.current?.stop();
+      st.dispatch({ type: "RESET_MEDIA" });
+      st.nextUpDispatch({ type: "RESET" });
+      resumeAt.current = null;
+      autoplayNext.current = true;
+      const url = new URL(window.location.href);
+      url.searchParams.set("episode", id);
+      window.history.replaceState(window.history.state, "", url.pathname + url.search);
+      void switchEpisode(id);
+    },
+    [store, switchEpisode, sess.session],
+  );
+  const nextEpisode = session?.nextEpisode ?? null;
+  const playNext = useCallback(() => {
+    if (nextEpisode) playEpisode(nextEpisode);
+  }, [nextEpisode, playEpisode]);
+  const skipIntro = useCallback(() => {
+    const w = introWindow(session?.markers);
+    if (!w) return;
+    engineRef.current?.seek(w.end);
+    poke();
+  }, [session, poke]);
+
+  // Next-episode countdown: feed positions, tick once a second, advance when it hits 0
+  useEffect(() => {
+    if (!nextEpisode) return;
+    const feed = (s: ReturnType<typeof store.getState>) =>
+      s.nextUpDispatch({ type: "TIME", time: s.currentTime, duration: s.duration, markers: session?.markers, hasNext: true });
+    feed(store.getState());
+    const unsub = store.subscribe((s, prev) => {
+      if (s.currentTime !== prev.currentTime || s.duration !== prev.duration) feed(s);
+      if (s.phase === "ended" && prev.phase !== "ended") s.nextUpDispatch({ type: "ENDED", hasNext: true });
+      if (s.nextUp.advance && !prev.nextUp.advance) playNext();
+    });
+    const tick = setInterval(() => {
+      const s = store.getState();
+      s.nextUpDispatch({ type: "TICK", running: (s.phase === "playing" && !s.seeking) || s.phase === "ended" });
+    }, 1000);
+    return () => {
+      unsub();
+      clearInterval(tick);
+    };
+  }, [store, nextEpisode, session, playNext]);
 
   // ───────── commands ─────────
   const goBack = useCallback(() => {
@@ -349,10 +441,15 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
         const level = st().levels.find((l) => l.index === index);
         savePrefs({ qualityHeight: index === -1 ? null : (level?.height ?? null) });
       },
-      setAudioTrack: (id) => engine()?.setAudioTrack(id),
-      setSubtitle: (lang) => {
-        st().setUi({ subtitleLang: lang });
-        savePrefs({ subtitleLang: lang });
+      setAudioTrack: (id) => {
+        engine()?.setAudioTrack(id);
+        const lang = st().audioTracks.find((t) => t.id === id)?.lang;
+        if (lang) savePrefs({ audioLang: lang });
+      },
+      setSubtitle: (id) => {
+        st().setUi({ subtitleId: id });
+        const track = session?.subtitles.find((x) => x.id === id);
+        savePrefs(track ? { subtitleLang: track.language, subtitlesOff: false } : { subtitlesOff: true });
       },
       toggleFullscreen,
       togglePip,
@@ -374,18 +471,14 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
       canPip: caps.pip,
       canFullscreen: caps.fullscreen,
       touch,
-      nextEpisodeHref: null,
+      titleId,
+      nextEpisode,
+      playEpisode,
+      playNext,
+      skipIntro,
     };
-  }, [store, session, detail, thumbnails, caps, touch, toggleFullscreen, togglePip, goBack, poke]);
-
-  const nextEpisodeHref = useMemo(() => {
-    if (!detail || !session?.episode) return null;
-    const eps = detail.seasons.flatMap((s) => s.episodes);
-    const i = eps.findIndex((e) => e.id === session.episode?.id);
-    const next = i === -1 ? undefined : eps.slice(i + 1).find((e) => e.playable);
-    return next ? `/watch/${titleId}?episode=${encodeURIComponent(next.id)}` : null;
-  }, [detail, session, titleId]);
-  const ctx = useMemo(() => ({ ...controller, nextEpisodeHref }), [controller, nextEpisodeHref]);
+  }, [store, session, detail, thumbnails, caps, touch, toggleFullscreen, togglePip, goBack, poke, titleId, nextEpisode, playEpisode, playNext, skipIntro]);
+  const ctx = controller;
 
   // ───────── keyboard ─────────
   useEffect(() => {
@@ -439,12 +532,19 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
           toggleFullscreen();
           break;
         case "toggleCaptions": {
-          const subs = session?.subtitles ?? [];
+          const subs = selectableSubtitles(session?.subtitles ?? []);
           if (!subs.length) break;
-          ctx.setSubtitle(st.subtitleLang ? null : (subs.find((s) => s.isDefault) ?? subs[0]).language);
+          const lang = loadPrefs().subtitleLang;
+          ctx.setSubtitle(st.subtitleId ? null : (subs.find((s) => sameLang(s.language, lang)) ?? subs.find((s) => s.isDefault) ?? subs[0]).id);
           poke();
           break;
         }
+        case "nextEpisode":
+          if (ctx.nextEpisode) ctx.playNext();
+          break;
+        case "skipIntro":
+          if (inIntro(session?.markers, st.currentTime)) ctx.skipIntro();
+          break;
         case "escape":
           if (st.menu) st.setUi({ menu: null });
           else if ((document as FsDocument).fullscreenElement) void document.exitFullscreen().catch(() => undefined);
@@ -495,7 +595,7 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
     const art = session.title.backdrop?.url ?? detail?.backdrop?.url ?? detail?.poster?.url;
     try {
       ms.metadata = new MediaMetadata({
-        title: session.episode ? `${session.title.name} – T${session.episode.seasonNumber}:E${session.episode.episodeNumber}` : session.title.name,
+        title: session.episode ? `${session.title.name} – ${episodeLabel(session.episode)}` : session.title.name,
         artist: "Lumio",
         artwork: art ? [{ src: art, sizes: "1280x720" }] : [],
       });
@@ -514,6 +614,7 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
     set("seekbackward", (d) => engineRef.current?.seekBy(-(d.seekOffset ?? 10)));
     set("seekforward", (d) => engineRef.current?.seekBy(d.seekOffset ?? 10));
     set("seekto", (d) => d.seekTime != null && engineRef.current?.seek(d.seekTime));
+    set("nexttrack", session.nextEpisode ? () => playNext() : null);
     const updatePosition = () => {
       const v = videoRef.current;
       if (!v || !Number.isFinite(v.duration) || v.duration <= 0) return;
@@ -531,10 +632,10 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
     });
     return () => {
       unsub();
-      for (const a of ["play", "pause", "seekbackward", "seekforward", "seekto"] as MediaSessionAction[]) set(a, null);
+      for (const a of ["play", "pause", "seekbackward", "seekforward", "seekto", "nexttrack"] as MediaSessionAction[]) set(a, null);
       ms.metadata = null;
     };
-  }, [session, detail, store]);
+  }, [session, detail, store, playNext]);
 
   // ───────── pointer / touch gestures on the stage ─────────
   const onStagePointerUp = (e: PointerEvent<HTMLDivElement>) => {
@@ -640,6 +741,8 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
         <PausedOverlay />
         <TopBar />
         <BottomBar />
+        <SkipIntroButton />
+        <NextUpCard />
         <BlockedOverlay />
         <EndScreen />
 

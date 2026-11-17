@@ -1,7 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { Prisma, type HomeRow as HomeRowModel } from "@app/db";
 import type {
-  CreditDto, GenreDto, HomeResponse, HomeRow, Paginated, SeasonDto, TitleCard, TitleDetail, TitleType,
+  CreditDto, EpisodeDto, GenreDto, HomeResponse, HomeRow, Paginated, SeasonDto, TitleCard, TitleDetail, TitleType,
 } from "@app/shared";
 import { PrismaService } from "../../infra/prisma.service.js";
 import { RedisService } from "../../infra/redis.service.js";
@@ -9,7 +9,9 @@ import { ApiException } from "../../common/api-exception.js";
 import { ImagePipelineService, pickImage } from "../storage/image-pipeline.service.js";
 import { CdnSigner } from "../storage/cdn-signer.js";
 import { cached } from "./cache.js";
-import { TitleCardsService, cardSelect, progressDto, visibleWhere, type ViewerCtx } from "./title-cards.service.js";
+import { TitleCardsService, cardSelect, visibleWhere, type ViewerCtx } from "./title-cards.service.js";
+import { SeriesService, progressDto, stillSelect } from "./series.service.js";
+import { compareEp } from "./series.js";
 
 export const HOME_ROW_SIZE = 18;
 const LIST_CAP = 500;
@@ -47,6 +49,7 @@ export class BrowseService {
     @Inject(TitleCardsService) private readonly cards: TitleCardsService,
     @Inject(ImagePipelineService) private readonly images: ImagePipelineService,
     @Inject(CdnSigner) private readonly cdn: CdnSigner,
+    @Inject(SeriesService) private readonly series: SeriesService,
   ) {}
 
   // ───────── danh sách id theo loại hàng ─────────
@@ -83,17 +86,6 @@ export class BrowseService {
     return [...ranked, ...fill];
   }
 
-  private async continueWatchingIds(ctx: ViewerCtx, where: Prisma.TitleWhereInput): Promise<string[]> {
-    const rows = await this.prisma.watchProgress.findMany({
-      where: { profileId: ctx.profileId, title: where },
-      orderBy: { updatedAt: "desc" },
-      distinct: ["titleId"],
-      take: 100,
-      select: { titleId: true, completed: true },
-    });
-    return rows.filter((r) => !r.completed).map((r) => r.titleId);
-  }
-
   private async myListIds(ctx: ViewerCtx, where: Prisma.TitleWhereInput): Promise<string[]> {
     const rows = await this.prisma.myListItem.findMany({
       where: { profileId: ctx.profileId, title: where }, orderBy: { createdAt: "desc" }, take: LIST_CAP, select: { titleId: true },
@@ -108,7 +100,7 @@ export class BrowseService {
     const where = visibleWhere(ctx, effType);
     switch (row.kind) {
       case "CONTINUE_WATCHING":
-        return this.continueWatchingIds(ctx, where);
+        return this.cards.continueWatchingIds(ctx, where);
       case "MY_LIST":
         return this.myListIds(ctx, where);
     }
@@ -273,81 +265,141 @@ export class BrowseService {
 
   // ───────── chi tiết ─────────
 
+  private titleWhere(idOrSlug: string): Prisma.TitleWhereInput {
+    return UUID_RE.test(idOrSlug) ? { OR: [{ id: idOrSlug }, { slug: idOrSlug }] } : { slug: idOrSlug };
+  }
+
   async detail(idOrSlug: string, ctx: ViewerCtx): Promise<TitleDetail> {
-    const where: Prisma.TitleWhereInput = UUID_RE.test(idOrSlug) ? { OR: [{ id: idOrSlug }, { slug: idOrSlug }] } : { slug: idOrSlug };
     const t = await this.prisma.title.findFirst({
-      where: { AND: [where, visibleWhere(ctx)] },
+      where: { AND: [this.titleWhere(idOrSlug), visibleWhere(ctx)] },
       select: {
         ...cardSelect,
         originalName: true, tagline: true, countries: true,
         genres: { select: { genre: { select: { id: true, slug: true, name: true } } } },
         credits: { orderBy: { sortOrder: "asc" }, select: { role: true, character: true, person: { select: { id: true, name: true, profileKey: true } } } },
         mainAsset: { select: { status: true, renditions: { select: { height: true } } } },
-        seasons: {
-          orderBy: { seasonNumber: "asc" },
-          select: {
-            id: true, seasonNumber: true, name: true,
-            episodes: {
-              where: { status: "PUBLISHED" },
-              orderBy: { episodeNumber: "asc" },
-              select: {
-                id: true, episodeNumber: true, name: true, overview: true, runtimeMinutes: true,
-                images: { where: { kind: "STILL" }, select: { kind: true, key: true, width: true, height: true, blurData: true, isPrimary: true } },
-                mainAsset: { select: { status: true, renditions: { select: { height: true } } } },
-              },
-            },
-          },
-        },
       },
     });
     if (!t) throw new ApiException(404, "NOT_FOUND", "Không tìm thấy phim");
     const [card] = await this.cards.toCards([{ ...t, genres: t.genres.map((g) => ({ genre: { name: g.genre.name } })) }], ctx);
-    const episodeIds = t.seasons.flatMap((s) => s.episodes.map((e) => e.id));
-    const epProgress = episodeIds.length
-      ? await this.prisma.watchProgress.findMany({
-        where: { profileId: ctx.profileId, episodeId: { in: episodeIds } }, orderBy: { updatedAt: "desc" },
-        select: { episodeId: true, positionSec: true, durationSec: true, completed: true, updatedAt: true },
-      })
-      : [];
-    const progByEp = new Map<string, (typeof epProgress)[number]>();
-    for (const p of epProgress) if (p.episodeId && !progByEp.has(p.episodeId)) progByEp.set(p.episodeId, p);
 
     const credit = (c: (typeof t.credits)[number]): CreditDto => ({
       id: c.person.id, name: c.person.name, character: c.character,
       profileUrl: c.person.profileKey ? this.cdn.publicUrl(c.person.profileKey) : null,
     });
-    const seasons: SeasonDto[] = t.seasons.map((s) => ({
-      id: s.id, seasonNumber: s.seasonNumber, name: s.name,
-      episodes: s.episodes.map((e) => {
-        const p = progByEp.get(e.id);
-        return {
-          id: e.id, episodeNumber: e.episodeNumber, name: e.name, overview: e.overview, runtimeMinutes: e.runtimeMinutes,
-          still: this.images.imageRef(pickImage(e.images, "STILL")),
-          progress: p ? progressDto(p) : null,
-          playable: e.mainAsset?.status === "READY",
-        };
-      }),
-    }));
-    const readyAssets = [
-      ...(t.mainAsset?.status === "READY" ? [t.mainAsset] : []),
-      ...t.seasons.flatMap((s) => s.episodes.map((e) => e.mainAsset).filter((a) => a?.status === "READY")),
+    const series = t.type === "SERIES" ? await this.seriesPart(t.id, ctx, card!.progress?.episodeId ?? null) : null;
+    const movieReady = t.mainAsset?.status === "READY";
+    const heights = [
+      ...(movieReady ? t.mainAsset!.renditions.map((r) => r.height) : []),
+      ...(series?.maxHeight ? [series.maxHeight] : []),
     ];
-    const heights = readyAssets.flatMap((a) => a!.renditions.map((r) => r.height));
-    const overview = t.overview;
     return {
       ...card!,
       originalName: t.originalName,
       tagline: t.tagline,
-      fullOverview: overview,
+      fullOverview: t.overview,
       releaseDate: t.releaseDate ? t.releaseDate.toISOString().slice(0, 10) : null,
       countries: t.countries,
       genreList: t.genres.map((g) => g.genre),
       cast: t.credits.filter((c) => c.role === "CAST").map(credit),
       directors: t.credits.filter((c) => c.role === "DIRECTOR" || c.role === "CREATOR").map(credit),
       writers: t.credits.filter((c) => c.role === "WRITER").map(credit),
-      playable: readyAssets.length > 0,
+      playable: movieReady || !!series?.resumeEpisode,
       maxAvailableHeight: heights.length ? Math.max(...heights) : null,
-      seasons,
+      seasons: series?.seasons ?? [],
+      resumeEpisode: series?.resumeEpisode ?? null,
+      seasonCount: series?.seasons.length ?? 0,
+      episodeCount: series?.episodeCount ?? 0,
+    };
+  }
+
+  /** Mùa có ≥1 tập đã xuất bản (theo thứ tự), số tập đã xuất bản theo mùa. */
+  private async visibleSeasons(titleId: string) {
+    const seasons = await this.prisma.season.findMany({
+      where: { titleId, episodes: { some: { status: "PUBLISHED" } } },
+      orderBy: { seasonNumber: "asc" },
+      select: { id: true, seasonNumber: true, name: true, overview: true, _count: { select: { episodes: { where: { status: "PUBLISHED" } } } } },
+    });
+    return seasons.sort((a, b) => compareEp({ seasonNumber: a.seasonNumber, episodeNumber: 0 }, { seasonNumber: b.seasonNumber, episodeNumber: 0 }));
+  }
+
+  /** Tập đã xuất bản của một mùa, kèm tiến độ từng tập của profile. */
+  private async seasonEpisodes(seasonId: string, seasonNumber: number, ctx: ViewerCtx): Promise<EpisodeDto[]> {
+    const eps = await this.prisma.episode.findMany({
+      where: { seasonId, status: "PUBLISHED" },
+      orderBy: { episodeNumber: "asc" },
+      select: {
+        id: true, episodeNumber: true, name: true, overview: true, runtimeMinutes: true, airDate: true,
+        images: stillSelect, mainAsset: { select: { status: true } },
+      },
+    });
+    const prog = eps.length
+      ? await this.prisma.watchProgress.findMany({
+        where: { profileId: ctx.profileId, episodeId: { in: eps.map((e) => e.id) } }, orderBy: { updatedAt: "desc" },
+        select: { episodeId: true, positionSec: true, durationSec: true, completed: true, updatedAt: true },
+      })
+      : [];
+    const byEp = new Map<string, (typeof prog)[number]>();
+    for (const p of prog) if (p.episodeId && !byEp.has(p.episodeId)) byEp.set(p.episodeId, p);
+    return eps.map((e) => {
+      const p = byEp.get(e.id);
+      return {
+        id: e.id, episodeNumber: e.episodeNumber, name: e.name, overview: e.overview, runtimeMinutes: e.runtimeMinutes,
+        still: this.images.imageRef(pickImage(e.images, "STILL")),
+        progress: p ? progressDto(p) : null,
+        playable: e.mainAsset?.status === "READY",
+        seasonNumber,
+        airDate: e.airDate ? e.airDate.toISOString().slice(0, 10) : null,
+      };
+    });
+  }
+
+  private async seriesPart(titleId: string, ctx: ViewerCtx, progressEpisodeId: string | null) {
+    const [seasons, resume, maxH] = await Promise.all([
+      this.visibleSeasons(titleId),
+      this.series.resume(ctx.profileId, titleId),
+      this.prisma.rendition.aggregate({
+        _max: { height: true },
+        where: { asset: { status: "READY", episodeAsMain: { titleId, status: "PUBLISHED" } } },
+      }),
+    ]);
+    // Mùa có tập sẽ phát (hoặc mùa có tập trong tiến độ thẻ) được trả đầy đủ tập; các mùa khác để rỗng.
+    const focusEp = resume?.episode ?? (progressEpisodeId ? resume?.all.find((e) => e.id === progressEpisodeId) : undefined);
+    const focusSeason = focusEp ? focusEp.seasonNumber : seasons[0]?.seasonNumber;
+    const out: SeasonDto[] = [];
+    for (const s of seasons) {
+      out.push({
+        id: s.id, seasonNumber: s.seasonNumber, name: s.name, overview: s.overview, episodeCount: s._count.episodes,
+        episodes: s.seasonNumber === focusSeason ? await this.seasonEpisodes(s.id, s.seasonNumber, ctx) : [],
+      });
+    }
+    return {
+      seasons: out,
+      resumeEpisode: resume ? this.series.episodeRef(resume.episode) : null,
+      episodeCount: seasons.reduce((n, s) => n + s._count.episodes, 0),
+      maxHeight: maxH._max.height,
+    };
+  }
+
+  /** GET /titles/:id/episodes?season=N — một mùa (mặc định: mùa của tập "xem tiếp"). */
+  async episodes(idOrSlug: string, seasonRaw: string | undefined, ctx: ViewerCtx): Promise<SeasonDto> {
+    const t = await this.prisma.title.findFirst({ where: { AND: [this.titleWhere(idOrSlug), visibleWhere(ctx)] }, select: { id: true, type: true } });
+    if (!t) throw new ApiException(404, "NOT_FOUND", "Không tìm thấy phim");
+    let seasonNumber: number | undefined;
+    if (seasonRaw !== undefined && seasonRaw !== "") {
+      seasonNumber = Number(seasonRaw);
+      if (!Number.isInteger(seasonNumber) || seasonNumber < 0 || seasonNumber > 10_000) throw new ApiException(400, "VALIDATION", "season phải là số nguyên ≥ 0");
+    }
+    const seasons = await this.visibleSeasons(t.id);
+    if (seasonNumber === undefined) {
+      const resume = await this.series.resume(ctx.profileId, t.id);
+      seasonNumber = resume?.episode.seasonNumber ?? seasons[0]?.seasonNumber;
+    }
+    const s = seasons.find((x) => x.seasonNumber === seasonNumber);
+    if (!s) throw new ApiException(404, "NOT_FOUND", "Không tìm thấy mùa phim");
+    return {
+      id: s.id, seasonNumber: s.seasonNumber, name: s.name, overview: s.overview, episodeCount: s._count.episodes,
+      episodes: await this.seasonEpisodes(s.id, s.seasonNumber, ctx),
     };
   }
 

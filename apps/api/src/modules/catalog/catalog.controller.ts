@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Put, Query, UseGuards } from "@nestjs/common";
-import type { GenreDto, HomeResponse, Paginated, TitleCard, TitleDetail } from "@app/shared";
+import type { GenreDto, HomeResponse, Paginated, SeasonDto, TitleCard, TitleDetail } from "@app/shared";
 import { AuthGuard, CurrentProfile, ProfileGuard, type RequestProfile } from "../../common/auth.js";
 import { BrowseService, parseType } from "./browse.service.js";
 import { PersonalService } from "./personal.service.js";
@@ -52,6 +52,11 @@ export class CatalogController {
   @Get("titles/:idOrSlug")
   detail(@CurrentProfile() p: RequestProfile, @Param("idOrSlug") idOrSlug: string): Promise<TitleDetail> {
     return this.browse.detail(idOrSlug, ctxOf(p));
+  }
+
+  @Get("titles/:id/episodes")
+  episodes(@CurrentProfile() p: RequestProfile, @Param("id") id: string, @Query("season") season?: string): Promise<SeasonDto> {
+    return this.browse.episodes(id, season, ctxOf(p));
   }
 
   @Get("titles/:id/similar")

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { TitleCard, TitleDetail } from "../src/catalog.js";
-import { detailCaption, fitCaption, lengthLabel, listCaption, runtimeLabel } from "../src/lib/format.js";
+import type { EpisodeInfo, TitleCard, TitleDetail } from "../src/catalog.js";
+import {
+  cardMeta, detailCaption, episodeCaption, episodeHeading, episodesCaption, firstEpisode, fitCaption, lengthLabel, listCaption, runtimeLabel,
+} from "../src/lib/format.js";
 import { paginate } from "../src/lib/pagination.js";
 import { CAPTION_LIMIT, visibleLength } from "../src/lib/text.js";
 
@@ -14,6 +16,11 @@ const detail = (over: Partial<TitleDetail> = {}): TitleDetail => ({
   directors: ["A"], cast: ["B", "C"], playable: true, maxHeight: 1080, seasons: [], ...over,
 });
 
+const ep = (n: number, over: Partial<EpisodeInfo> = {}): EpisodeInfo => ({
+  id: `00000000-0000-7000-8000-${String(n).padStart(12, "0")}`, episodeNumber: n, name: `Tên tập ${n}`, overview: null,
+  runtimeMinutes: 45, stillKey: null, playable: true, ...over,
+});
+
 describe("labels", () => {
   it("formats runtime and series length", () => {
     expect(runtimeLabel(118)).toBe("1 giờ 58 phút");
@@ -22,8 +29,8 @@ describe("labels", () => {
     expect(runtimeLabel(null)).toBeNull();
     expect(lengthLabel(detail({ type: "SERIES", seasons: [] }))).toBeNull();
     expect(lengthLabel(detail({ type: "SERIES", seasons: [
-      { seasonNumber: 1, name: null, episodes: [{ episodeNumber: 1, name: null, playable: true }, { episodeNumber: 2, name: null, playable: false }] },
-      { seasonNumber: 2, name: null, episodes: [{ episodeNumber: 1, name: null, playable: false }] },
+      { seasonNumber: 1, name: null, episodes: [ep(1), ep(2, { playable: false })] },
+      { seasonNumber: 2, name: null, episodes: [ep(1, { playable: false })] },
     ] }))).toBe("2 mùa · 3 tập");
   });
 });
@@ -79,5 +86,64 @@ describe("list caption", () => {
     const long = Array.from({ length: 200 }, (_, i) => `<b>dòng ${i}</b>`).join("\n");
     expect(visibleLength(fitCaption(long))).toBeLessThanOrEqual(CAPTION_LIMIT);
     expect(visibleLength(fitCaption("x".repeat(5000)))).toBeLessThanOrEqual(CAPTION_LIMIT);
+  });
+});
+
+describe("series captions", () => {
+  const series = (over: Partial<TitleDetail> = {}) => detail({
+    type: "SERIES", name: "Phố Cổ Tình Nhân", seasonCount: 2,
+    seasons: [
+      { seasonNumber: 1, name: "Mùa 1", episodes: Array.from({ length: 14 }, (_, i) => ep(i + 1)) },
+      { seasonNumber: 2, name: "Hồi kết", episodes: [ep(1), ep(2, { playable: false, runtimeMinutes: null })] },
+    ],
+    ...over,
+  });
+  it("series cards show the season count", () => {
+    expect(cardMeta(card({ type: "SERIES", seasonCount: 3, rating: null }))).toBe("2025 · Phim bộ · 3 mùa");
+    expect(cardMeta(card({ type: "SERIES", seasonCount: 0, rating: null }))).toBe("2025 · Phim bộ");
+  });
+  it("detail shows N mùa · M tập and the generic resume hint", () => {
+    const c = detailCaption(series());
+    expect(c).toContain("Phim bộ · 2 mùa · 16 tập");
+    expect(c).toContain("• Mùa 1: 14 tập\n• Mùa 2 (Hồi kết): 2 tập");
+    expect(c).toContain("Xem ngay</i> mở Mùa 1 · Tập 1");
+    expect(c).toContain("tiếp tục tập bạn đang xem dở");
+  });
+  it("detail of a series with no published episodes says so", () => {
+    expect(detailCaption(series({ seasons: [], playable: false }))).toContain("Chưa có tập nào được phát hành");
+  });
+  it("first episode skips specials and unplayable episodes", () => {
+    const d = series({ seasons: [
+      { seasonNumber: 1, name: null, episodes: [ep(1, { playable: false }), ep(2)] },
+      { seasonNumber: 0, name: null, episodes: [ep(1)] },
+    ] });
+    expect(firstEpisode(d)).toMatchObject({ season: { seasonNumber: 1 }, episode: { episodeNumber: 2 } });
+    expect(firstEpisode(series({ seasons: [] }))).toBeNull();
+  });
+  it("episode heading omits generic names", () => {
+    expect(episodeHeading(1, { episodeNumber: 3, name: "Đêm trắng" })).toBe("Mùa 1 · Tập 3 — Đêm trắng");
+    expect(episodeHeading(2, { episodeNumber: 3, name: "Episode 3" })).toBe("Mùa 2 · Tập 3");
+    expect(episodeHeading(0, { episodeNumber: 1, name: null })).toBe("Đặc biệt · Tập 1");
+  });
+  it("picker caption lists this page's episodes", () => {
+    const d = series();
+    const c = episodesCaption(d, d.seasons[0]!, paginate(14, 2, 12));
+    expect(c).toContain("Mùa 1 · 14 tập · trang 2/2");
+    expect(c).toContain("<b>13.</b> Tên tập 13");
+    expect(c).not.toContain("<b>12.</b>");
+    const c2 = episodesCaption(d, d.seasons[1]!, paginate(2, 1, 12));
+    expect(c2).toContain("<i>(Hồi kết)</i>");
+    expect(c2).toContain("⏳ sắp có");
+  });
+  it("episode caption has heading, runtime, synopsis and position, within the limit", () => {
+    const d = series();
+    const e1 = { ...d.seasons[0]!.episodes[2]!, overview: "Một đêm & <mưa>." };
+    const c = episodeCaption(d, { ...d.seasons[0]!, episodes: d.seasons[0]!.episodes.map((x, i) => (i === 2 ? e1 : x)) }, e1);
+    expect(c).toContain("<b>Mùa 1 · Tập 3 — Tên tập 3</b>");
+    expect(c).toContain("⏱ 45 phút · ✅ Xem được ngay");
+    expect(c).toContain("Một đêm &amp; &lt;mưa&gt;.");
+    expect(c).toContain("Tập 3/14 của Mùa 1");
+    const huge = { ...e1, name: "Tên ".repeat(200), overview: "Rất dài ".repeat(500) };
+    expect(visibleLength(episodeCaption(d, { ...d.seasons[0]!, episodes: [huge] }, huge))).toBeLessThanOrEqual(CAPTION_LIMIT);
   });
 });

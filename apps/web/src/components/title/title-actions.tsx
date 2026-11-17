@@ -1,35 +1,41 @@
 "use client";
 
-import type { RatingValue, TitleCard, TitleDetail } from "@app/shared";
+import type { EpisodeRef, RatingValue, TitleCard, TitleDetail } from "@app/shared";
 import { Check, Play, Plus, ThumbsDown, ThumbsUp } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { CircleButton } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { playAction, watchUrl } from "@/lib/episodes";
 import { useRateTitle, useToggleMyList } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
-export function watchHref(title: Pick<TitleCard, "id" | "progress">, episodeId?: string | null) {
-  const ep = episodeId ?? title.progress?.episodeId;
-  return `/watch/${title.id}${ep ? `?episode=${encodeURIComponent(ep)}` : ""}`;
+/**
+ * Player link. An explicit episode wins; otherwise series play their `resumeEpisode` (detail) or the episode in
+ * progress (cards), and with neither the API picks the "xem tiếp" episode.
+ */
+export function watchHref(title: Pick<TitleCard, "id" | "type" | "progress"> & { resumeEpisode?: EpisodeRef | null }, episodeId?: string | null) {
+  if (episodeId) return watchUrl(title.id, episodeId);
+  return playAction(title).href;
 }
 
-/** Big white "Phát"/"Tiếp tục" button (billboard + detail modal) */
+/** Big white "Phát"/"Tiếp tục"/"Tiếp tục T1:E3" button (billboard + detail modal) */
 export function PlayButton({
   title,
   className,
   size = "lg",
   label,
 }: {
-  title: Pick<TitleCard, "id" | "progress">;
+  title: Pick<TitleCard, "id" | "type" | "progress"> & { resumeEpisode?: EpisodeRef | null };
   className?: string;
   size?: "md" | "lg";
   label?: string;
 }) {
-  const resume = title.progress && !title.progress.completed && title.progress.positionSec > 30;
+  const action = playAction(title);
   return (
     <Link
-      href={watchHref(title)}
+      href={action.href}
+      data-testid="play-button"
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded bg-white font-bold text-black transition-colors hover:bg-white/75",
         size === "lg" ? "h-[clamp(2.5rem,3.4vw,3.25rem)] px-[clamp(1.25rem,2.4vw,2.25rem)] text-[clamp(1rem,1.35vw,1.3rem)]" : "h-10 px-5 text-base",
@@ -37,7 +43,7 @@ export function PlayButton({
       )}
     >
       <Play className="size-[1.4em] fill-current" aria-hidden />
-      {label ?? (resume ? "Tiếp tục" : "Phát")}
+      {label ?? action.label}
     </Link>
   );
 }

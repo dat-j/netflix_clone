@@ -6,14 +6,18 @@ export interface PlayerPrefs {
   rate: number;
   /** Preferred max height for manual quality, null = Auto */
   qualityHeight: number | null;
-  /** Subtitle language, null = off */
+  /** Preferred subtitle language when subtitles are on (null = never chosen) */
   subtitleLang: string | null;
+  /** Viewer explicitly switched subtitles off */
+  subtitlesOff: boolean;
+  /** Preferred audio language (multi-audio titles), null = manifest default */
+  audioLang: string | null;
 }
 
 export const PREFS_KEY = "lumio.player.prefs.v1";
 export const RATES = [0.5, 0.75, 1, 1.25, 1.5] as const;
 
-export const DEFAULT_PREFS: PlayerPrefs = { volume: 1, muted: false, rate: 1, qualityHeight: null, subtitleLang: null };
+export const DEFAULT_PREFS: PlayerPrefs = { volume: 1, muted: false, rate: 1, qualityHeight: null, subtitleLang: null, subtitlesOff: false, audioLang: null };
 
 export function sanitizePrefs(raw: unknown): PlayerPrefs {
   const p = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -25,6 +29,8 @@ export function sanitizePrefs(raw: unknown): PlayerPrefs {
     rate,
     qualityHeight: typeof p.qualityHeight === "number" && p.qualityHeight > 0 ? p.qualityHeight : null,
     subtitleLang: typeof p.subtitleLang === "string" && p.subtitleLang ? p.subtitleLang : null,
+    subtitlesOff: p.subtitlesOff === true,
+    audioLang: typeof p.audioLang === "string" && p.audioLang ? p.audioLang : null,
   };
 }
 

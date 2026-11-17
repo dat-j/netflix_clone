@@ -59,6 +59,9 @@ const title: AdminTitle = {
   images: [],
   mainAsset: null,
   previewAsset: null,
+  seasonCount: 0,
+  episodeCount: 0,
+  publishedEpisodeCount: 0,
   createdAt: "",
   updatedAt: "",
 };

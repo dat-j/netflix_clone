@@ -59,3 +59,46 @@ export const billboardInput = z.object({ titleId: uuid });
 export const scanBody = z.object({ prefix: z.string().max(1024).optional() });
 
 export { uuid };
+
+// ───────── phim bộ ─────────
+const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dạng YYYY-MM-DD").nullable().optional();
+const markerSec = z.number().int().min(0).max(86_400).nullable().optional();
+
+export const adminSeasonInput = z.object({
+  seasonNumber: z.number().int().min(0).max(1000),
+  name: nullableStr(300),
+  overview: nullableStr(5000),
+  airDate: dateOnly,
+});
+export const adminSeasonPatch = adminSeasonInput.partial().extend({
+  /** Mở rộng (giống title): đặt lại danh sách trường bị khóa, ví dụ [] để TMDB ghi đè lại */
+  overriddenFields: z.array(z.string()).optional(),
+});
+
+export const adminEpisodeInput = z.object({
+  episodeNumber: z.number().int().min(0).max(10_000),
+  name: nullableStr(300),
+  overview: nullableStr(5000),
+  runtimeMinutes: z.number().int().min(0).max(2000).nullable().optional(),
+  airDate: dateOnly,
+  introStartSec: markerSec,
+  introEndSec: markerSec,
+  creditsStartSec: markerSec,
+});
+export const adminEpisodePatch = adminEpisodeInput.partial().extend({ overriddenFields: z.array(z.string()).optional() });
+export const bulkEpisodesBody = z.object({ count: z.number().int().min(1).max(200), startAt: z.number().int().min(0).max(10_000).optional() });
+export const episodeAssetBody = z.object({ sourceFileId: uuid });
+export const syncSeasonsBody = z.object({ seasonNumbers: z.array(z.number().int().min(0).max(1000)).max(100).optional() });
+
+/** Mốc intro/credits hợp lệ sau khi gộp với giá trị hiện tại. */
+export function assertMarkers(m: { introStartSec: number | null; introEndSec: number | null; creditsStartSec: number | null }) {
+  if ((m.introStartSec === null) !== (m.introEndSec === null)) {
+    throw new ApiException(400, "VALIDATION", "introStartSec và introEndSec phải cùng có hoặc cùng trống");
+  }
+  if (m.introStartSec !== null && m.introEndSec !== null && m.introEndSec <= m.introStartSec) {
+    throw new ApiException(400, "VALIDATION", "introEndSec phải lớn hơn introStartSec");
+  }
+  if (m.creditsStartSec !== null && m.introEndSec !== null && m.creditsStartSec < m.introEndSec) {
+    throw new ApiException(400, "VALIDATION", "creditsStartSec phải sau introEndSec");
+  }
+}

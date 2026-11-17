@@ -1,5 +1,6 @@
 import { HLS_SEGMENT_SECONDS, mediaLayout } from "@app/shared/media";
 import { AAC_LC_CODEC, avcCodecString, type RenditionPlan } from "./renditions.js";
+import { AUDIO_GROUP_ID, type AudioPlan } from "./audio.js";
 
 export interface ThumbsPlan {
   intervalSec: number;
@@ -17,8 +18,8 @@ export interface TranscodeArgsInput {
   renditions: RenditionPlan[];
   /** Absolute ffprobe stream index of the video stream. */
   videoStreamIndex: number;
-  /** Absolute stream index of the audio track to keep (null = video only). */
-  audioStreamIndex: number | null;
+  /** Audio tracks; each becomes its own audio-only HLS rendition `<outDir>/<name>/index.m3u8` ([] = video only). */
+  audio: Pick<AudioPlan, "streamIndex" | "name" | "kbps">[];
   sourceFrameRate: number | null;
   hdr: boolean;
   preset: string;
@@ -56,8 +57,10 @@ export function outputFrameRate(sourceFrameRate: number | null): number {
 }
 
 /**
- * ONE ffmpeg run: decode once → split → N scaled H.264 renditions (+AAC from one audio track) muxed into encrypted
- * MPEG-TS HLS via var_stream_map.
+ * ONE ffmpeg run: decode once → split → N scaled H.264 video-only renditions + one AAC-LC stereo audio-only rendition
+ * per source audio track (demuxed "alternate audio", referenced from the master via EXT-X-MEDIA TYPE=AUDIO), all
+ * written as encrypted MPEG-TS HLS (same key/IV) via var_stream_map. Audio is encoded once per track, not once per
+ * video rendition. Segment naming is unchanged: `<variant>/seg_%05d.ts`.
  *
  * Sprite sheets are deliberately NOT a branch of this graph: a `tile=10x10` output emits one frame per ~1000 s of
  * content, and ffmpeg 7's scheduler keeps feeding the starved branch, buffering raw frames for every other branch
@@ -88,10 +91,8 @@ export function buildTranscodeArgs(o: TranscodeArgsInput): string[] {
   if (o.threads) args.push("-threads", String(o.threads));
 
   // ── output 1: HLS ──
-  for (let i = 0; i < n; i++) {
-    args.push("-map", `[v${i}]`);
-    if (o.audioStreamIndex !== null) args.push("-map", `0:${o.audioStreamIndex}`);
-  }
+  for (let i = 0; i < n; i++) args.push("-map", `[v${i}]`);
+  for (const a of o.audio) args.push("-map", `0:${a.streamIndex}`);
   args.push(
     "-c:v", "libx264",
     "-preset", o.preset,
@@ -112,13 +113,14 @@ export function buildTranscodeArgs(o: TranscodeArgsInput): string[] {
       `-level:v:${i}`, (r.level / 10).toFixed(1),
     );
   });
-  if (o.audioStreamIndex !== null) {
+  if (o.audio.length) {
     args.push("-c:a", "aac", "-ac", "2", "-ar", "48000");
-    o.renditions.forEach((r, i) => args.push(`-b:a:${i}`, `${r.audioKbps}k`));
+    o.audio.forEach((a, j) => args.push(`-b:a:${j}`, `${a.kbps}k`));
   }
-  const streamMap = o.renditions
-    .map((r, i) => (o.audioStreamIndex !== null ? `v:${i},a:${i},name:${r.name}` : `v:${i},name:${r.name}`))
-    .join(" ");
+  const streamMap = [
+    ...o.renditions.map((r, i) => `v:${i},name:${r.name}`),
+    ...o.audio.map((a, j) => `a:${j},name:${a.name}`),
+  ].join(" ");
   args.push(
     "-f", "hls",
     "-hls_time", String(seg),
@@ -234,15 +236,49 @@ export interface MasterVariant {
   bandwidth: number;
   averageBandwidth: number;
 }
-export function buildMasterPlaylist(variants: MasterVariant[], opts: { frameRate: number; hasAudio: boolean }): string {
+export interface MasterAudio {
+  name: string;
+  language: string;
+  label: string;
+  channels: number;
+  isDefault: boolean;
+  bandwidth: number;
+  averageBandwidth: number;
+}
+
+const attr = (s: string) => s.replace(/["\r\n]/g, "").trim();
+
+/**
+ * Master playlist. With audio tracks: one `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud"` per track (exactly one
+ * DEFAULT=YES, all AUTOSELECT=YES, LANGUAGE unless unknown, unique NAME) and every video variant carries
+ * `AUDIO="aud"`, CODECS with mp4a, and BANDWIDTH = video + the largest audio rendition (HLS spec §4.4.6.2).
+ */
+export function buildMasterPlaylist(variants: MasterVariant[], opts: { frameRate: number; audio: MasterAudio[] }): string {
   const lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-INDEPENDENT-SEGMENTS"];
+  const audio = opts.audio;
+  const hasAudio = audio.length > 0;
+  const defaultIdx = Math.max(0, audio.findIndex((a) => a.isDefault));
+  const used = new Set<string>();
+  audio.forEach((a, i) => {
+    let name = attr(a.label) || `Audio ${i + 1}`;
+    if (used.has(name)) name = `${name} ${i + 1}`;
+    used.add(name);
+    lines.push(
+      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="${AUDIO_GROUP_ID}",NAME="${name}"` +
+        (a.language && a.language !== "und" ? `,LANGUAGE="${attr(a.language)}"` : "") +
+        `,DEFAULT=${i === defaultIdx ? "YES" : "NO"},AUTOSELECT=YES,CHANNELS="${a.channels}",URI="${a.name}/index.m3u8"`,
+    );
+  });
+  const audioPeak = hasAudio ? Math.max(...audio.map((a) => a.bandwidth)) : 0;
+  const audioAvg = hasAudio ? Math.max(...audio.map((a) => a.averageBandwidth)) : 0;
   const sorted = [...variants].sort((a, b) => a.bandwidth - b.bandwidth);
   for (const v of sorted) {
     const r = v.rendition;
-    const codecs = [avcCodecString(r.level), ...(opts.hasAudio ? [AAC_LC_CODEC] : [])].join(",");
+    const codecs = [avcCodecString(r.level), ...(hasAudio ? [AAC_LC_CODEC] : [])].join(",");
     lines.push(
-      `#EXT-X-STREAM-INF:BANDWIDTH=${v.bandwidth},AVERAGE-BANDWIDTH=${v.averageBandwidth},` +
-        `RESOLUTION=${r.width}x${r.height},CODECS="${codecs}",FRAME-RATE=${opts.frameRate.toFixed(3)}`,
+      `#EXT-X-STREAM-INF:BANDWIDTH=${v.bandwidth + audioPeak},AVERAGE-BANDWIDTH=${v.averageBandwidth + audioAvg},` +
+        `RESOLUTION=${r.width}x${r.height},CODECS="${codecs}",FRAME-RATE=${opts.frameRate.toFixed(3)}` +
+        (hasAudio ? `,AUDIO="${AUDIO_GROUP_ID}"` : ""),
       `${r.name}/index.m3u8`,
     );
   }

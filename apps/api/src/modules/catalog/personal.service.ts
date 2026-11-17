@@ -58,11 +58,7 @@ export class PersonalService {
   }
 
   async continueWatching(ctx: ViewerCtx): Promise<TitleCard[]> {
-    const rows = await this.prisma.watchProgress.findMany({
-      where: { profileId: ctx.profileId, title: visibleWhere(ctx) },
-      orderBy: { updatedAt: "desc" }, distinct: ["titleId"], take: 100, select: { titleId: true, completed: true },
-    });
-    return this.cards.cardsByIds(rows.filter((r) => !r.completed).map((r) => r.titleId), ctx);
+    return this.cards.cardsByIds(await this.cards.continueWatchingIds(ctx, visibleWhere(ctx)), ctx);
   }
 
   async removeContinueWatching(titleId: string, ctx: ViewerCtx) {

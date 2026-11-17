@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Film, Plus, Search } from "lucide-react";
 import type { AdminTitle } from "@app/shared";
-import { formatDateTime } from "../lib/format";
+import { cn, formatDateTime } from "../lib/format";
+import { seriesCountsLabel } from "../lib/series";
 import { useDebounced } from "../lib/hooks";
 import { useTitles } from "../lib/queries";
 import { Card, EmptyState, ErrorState, Input, PageHeader, Pagination, Select, Spinner, Toolbar } from "../ui/primitives";
@@ -86,7 +87,7 @@ export function TitlesListSection() {
             <Th className="w-[44%]">Phim</Th>
             <Th>Loại</Th>
             <Th>Trạng thái</Th>
-            <Th>Media chính</Th>
+            <Th>Media / tập</Th>
             <Th>Năm</Th>
             <Th>TMDB</Th>
             <Th>Cập nhật</Th>
@@ -129,7 +130,22 @@ export function TitlesListSection() {
                     <Td>
                       <PublishBadge status={t.status} />
                     </Td>
-                    <Td>{t.mainAsset ? <AssetStatusBadge status={t.mainAsset.status} /> : <span className="text-xs text-zinc-400">Chưa gắn</span>}</Td>
+                    <Td>
+                      {t.type === "SERIES" ? (
+                        <span className="text-xs whitespace-nowrap text-zinc-700" data-testid="series-counts">
+                          {seriesCountsLabel(t)}
+                          {t.episodeCount ? (
+                            <span className={cn("ml-1.5", t.publishedEpisodeCount ? "text-emerald-700" : "text-amber-700")}>
+                              ({t.publishedEpisodeCount} đã XB)
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : t.mainAsset ? (
+                        <AssetStatusBadge status={t.mainAsset.status} />
+                      ) : (
+                        <span className="text-xs text-zinc-400">Chưa gắn</span>
+                      )}
+                    </Td>
                     <Td className="tabular-nums">{t.releaseDate?.slice(0, 4) ?? "—"}</Td>
                     <Td className="text-xs tabular-nums text-zinc-500">{t.tmdbId ?? "—"}</Td>
                     <Td className="text-xs whitespace-nowrap text-zinc-500">{formatDateTime(t.updatedAt)}</Td>

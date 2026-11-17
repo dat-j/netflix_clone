@@ -9,7 +9,6 @@ import { activeCues, type TextCue } from "./lib/vtt";
 import { episodeLabel } from "./lib/format";
 import { isPausedIdle } from "./lib/state";
 import { usePlayerStore } from "./store";
-import Link from "next/link";
 
 const RATING_TEXT: Record<string, string> = {
   P: "Phổ biến cho mọi đối tượng khán giả",
@@ -246,9 +245,12 @@ export function BlockedOverlay() {
 
 /** End of title: replay / back / next-episode hook. */
 export function EndScreen() {
-  const { replay, goBack, session, detail, nextEpisodeHref } = usePlayer();
+  const { replay, goBack, session, detail, nextEpisode, playNext } = usePlayer();
   const ended = usePlayerStore((s) => s.phase === "ended");
-  if (!ended) return null;
+  // The "Tập tiếp theo" card owns the end of a series episode until the viewer dismisses it
+  const nextUpShowing = usePlayerStore((s) => s.nextUp.visible || s.nextUp.advance);
+  if (!ended || (nextEpisode && nextUpShowing)) return null;
+  const ep = episodeLabel(session?.episode ?? null);
   const backdrop = session?.title.backdrop?.url ?? detail?.backdrop?.url;
   const name = session?.title.name ?? detail?.name ?? "";
   return (
@@ -261,15 +263,18 @@ export function EndScreen() {
       <div className="relative w-full px-6 pb-16 md:max-w-3xl md:px-16 md:pb-0 lg:px-24">
         <p className="text-sm font-semibold tracking-[0.2em] text-white/60 uppercase md:text-base">Đã xem xong</p>
         <h2 className="mt-2 text-3xl leading-tight font-black tracking-tight text-white md:text-6xl">{name}</h2>
-        {detail?.tagline && <p className="mt-3 text-base text-white/75 italic md:text-xl">{detail.tagline}</p>}
+        {ep && <p className="mt-2 text-lg font-semibold text-white/85 md:text-2xl">{ep}</p>}
+        {!ep && detail?.tagline && <p className="mt-3 text-base text-white/75 italic md:text-xl">{detail.tagline}</p>}
         <div className="mt-8 flex flex-wrap gap-3">
-          {nextEpisodeHref && (
-            <Link
-              href={nextEpisodeHref}
+          {nextEpisode && (
+            <button
+              type="button"
+              onClick={playNext}
+              data-testid="end-next-episode"
               className="inline-flex h-12 items-center gap-2.5 rounded-md bg-white px-6 text-lg font-bold text-black transition hover:bg-white/80 md:h-14 md:px-8 md:text-xl [&>svg]:size-6"
             >
               <NextEpisodeIcon /> Tập tiếp theo
-            </Link>
+            </button>
           )}
           <button
             type="button"
@@ -277,7 +282,7 @@ export function EndScreen() {
             data-testid="replay"
             className={cn(
               "inline-flex h-12 items-center gap-2.5 rounded-md px-6 text-lg font-bold transition md:h-14 md:px-8 md:text-xl [&>svg]:size-6",
-              nextEpisodeHref ? "bg-white/20 text-white hover:bg-white/30" : "bg-white text-black hover:bg-white/80",
+              nextEpisode ? "bg-white/20 text-white hover:bg-white/30" : "bg-white text-black hover:bg-white/80",
             )}
           >
             <ReplayIcon /> Xem lại

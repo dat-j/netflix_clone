@@ -3,6 +3,7 @@ import type { Prisma } from "@app/db";
 import type { TitleCard, TitleType, WatchProgressDto } from "@app/shared";
 import { PrismaService } from "../../infra/prisma.service.js";
 import { ImagePipelineService, pickImage } from "../storage/image-pipeline.service.js";
+import { SeriesService, progressDto, type ProgressRow } from "./series.service.js";
 
 /** Nhãn độ tuổi được phép cho hồ sơ trẻ em. */
 export const KIDS_SAFE_RATINGS = ["P", "K", "G", "PG", "TV-Y", "TV-Y7", "TV-G", "U", "0+", "6+"];
@@ -41,10 +42,7 @@ export function shortOverview(s: string | null, max = 220): string | null {
   return `${(sp > max * 0.6 ? cut.slice(0, sp) : cut).trimEnd()}…`;
 }
 
-export function progressDto(p: { positionSec: number; durationSec: number; completed: boolean; episodeId: string | null; updatedAt: Date }): WatchProgressDto {
-  const ratio = p.durationSec > 0 ? Math.min(1, Math.max(0, p.positionSec / p.durationSec)) : 0;
-  return { positionSec: p.positionSec, durationSec: p.durationSec, ratio, completed: p.completed, episodeId: p.episodeId, updatedAt: p.updatedAt.toISOString() };
-}
+export { progressDto };
 
 /** Dựng TitleCard theo lô: 1 query title + 3 query cờ cá nhân (my list, rating, progress) — không N+1. */
 @Injectable()
@@ -52,7 +50,47 @@ export class TitleCardsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ImagePipelineService) private readonly images: ImagePipelineService,
+    @Inject(SeriesService) private readonly series: SeriesService,
   ) {}
+
+  /**
+   * Tiến độ hiển thị theo title cho profile. Phim lẻ: bản ghi mới nhất. Phim bộ: tiến độ của tập mới nhất, hoặc
+   * tập kế nếu tập đó đã xem xong (xem `SeriesService.effectiveSeriesProgress`) — `episodeId` là tập sẽ phát.
+   */
+  async effectiveProgress(profileId: string, titles: { id: string; type: TitleType }[]): Promise<Map<string, WatchProgressDto>> {
+    const out = new Map<string, WatchProgressDto>();
+    const rows = await this.series.progressRows(profileId, titles.map((t) => t.id));
+    const byTitle = new Map<string, ProgressRow[]>();
+    for (const r of rows) {
+      const l = byTitle.get(r.titleId) ?? [];
+      l.push(r);
+      byTitle.set(r.titleId, l);
+    }
+    const seriesIds = titles.filter((t) => t.type === "SERIES" && byTitle.get(t.id)?.[0]?.episodeId).map((t) => t.id);
+    const playable = await this.series.playableEpisodes(seriesIds);
+    for (const t of titles) {
+      const list = byTitle.get(t.id);
+      if (!list?.length) continue;
+      const p = t.type === "SERIES" && list[0]!.episodeId
+        ? this.series.effectiveSeriesProgress(list, playable.get(t.id) ?? [])
+        : progressDto(list[0]!);
+      if (p) out.set(t.id, p);
+    }
+    return out;
+  }
+
+  /** Id title cho "Xem tiếp": mới nhất trước; phim bộ còn ở lại khi xem xong một tập mà còn tập kế. */
+  async continueWatchingIds(ctx: ViewerCtx, where: Prisma.TitleWhereInput): Promise<string[]> {
+    const rows = await this.prisma.watchProgress.findMany({
+      where: { profileId: ctx.profileId, title: where },
+      orderBy: { updatedAt: "desc" },
+      distinct: ["titleId"],
+      take: 100,
+      select: { titleId: true, title: { select: { type: true } } },
+    });
+    const progress = await this.effectiveProgress(ctx.profileId, rows.map((r) => ({ id: r.titleId, type: r.title.type })));
+    return rows.filter((r) => progress.get(r.titleId)?.completed === false).map((r) => r.titleId);
+  }
 
   /** Thẻ theo danh sách id, giữ nguyên thứ tự, bỏ id không hiển thị được. */
   async cardsByIds(ids: string[], ctx: ViewerCtx, extraWhere: Prisma.TitleWhereInput = {}): Promise<TitleCard[]> {
@@ -69,19 +107,12 @@ export class TitleCardsService {
     const [list, ratings, progress] = await Promise.all([
       this.prisma.myListItem.findMany({ where: { profileId: ctx.profileId, titleId: { in: ids } }, select: { titleId: true } }),
       this.prisma.rating.findMany({ where: { profileId: ctx.profileId, titleId: { in: ids } }, select: { titleId: true, value: true } }),
-      this.prisma.watchProgress.findMany({
-        where: { profileId: ctx.profileId, titleId: { in: ids } },
-        orderBy: { updatedAt: "desc" },
-        select: { titleId: true, positionSec: true, durationSec: true, completed: true, episodeId: true, updatedAt: true },
-      }),
+      this.effectiveProgress(ctx.profileId, rows),
     ]);
     const inList = new Set(list.map((l) => l.titleId));
     const ratingBy = new Map(ratings.map((r) => [r.titleId, r.value]));
-    const progressBy = new Map<string, (typeof progress)[number]>();
-    for (const p of progress) if (!progressBy.has(p.titleId)) progressBy.set(p.titleId, p);
     const newSince = Date.now() - NEW_WINDOW_DAYS * 86_400_000;
     return rows.map((r) => {
-      const p = progressBy.get(r.id);
       return {
         id: r.id,
         slug: r.slug,
@@ -100,7 +131,7 @@ export class TitleCardsService {
         isNew: !!r.publishedAt && r.publishedAt.getTime() >= newSince,
         inMyList: inList.has(r.id),
         rating: ratingBy.get(r.id) ?? null,
-        progress: p ? progressDto(p) : null,
+        progress: progress.get(r.id) ?? null,
       } satisfies TitleCard;
     });
   }

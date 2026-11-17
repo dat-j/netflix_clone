@@ -340,6 +340,8 @@ model Season {
   name         String?
   overview     String?
   airDate      DateTime? @db.Date
+  /// Trường admin đã sửa tay (name, overview, airDate) → đồng bộ TMDB không ghi đè
+  overriddenFields String[] @default([])
 
   title    Title     @relation(fields: [titleId], references: [id], onDelete: Cascade)
   episodes Episode[]
@@ -361,6 +363,8 @@ model Episode {
   introEndSec    Int?
   creditsStartSec Int?
   mainAssetId    String?       @unique @db.Uuid
+  /// Trường admin đã sửa tay (name, overview, airDate, runtimeMinutes) → đồng bộ TMDB không ghi đè
+  overriddenFields String[]    @default([])
 
   title     Title       @relation(fields: [titleId], references: [id], onDelete: Cascade)
   season    Season      @relation(fields: [seasonId], references: [id], onDelete: Cascade)
