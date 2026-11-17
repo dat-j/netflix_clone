@@ -102,7 +102,7 @@ export function DetailView({ idOrSlug, mode, onClose, TitleTag = "h1" }: DetailV
       </div>
 
       {/* info */}
-      <div className="px-[5%] pb-8">
+      <div className="px-[5%] pb-8 animate-[rise-in_.55s_cubic-bezier(.16,1,.3,1)_both]">
         <div className="grid gap-x-8 gap-y-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <div className="min-w-0 space-y-4">
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[0.95rem] text-white/80">

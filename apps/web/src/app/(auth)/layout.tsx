@@ -10,7 +10,7 @@ export default function AuthLayout({ children }: LayoutProps<"/">) {
         <LogoLink />
       </header>
       <main className="relative z-10 flex flex-1 items-start justify-center sm:px-4 sm:pt-4 sm:pb-16">
-        <div className="w-full bg-black px-6 pt-4 pb-10 sm:max-w-[450px] sm:rounded-md sm:bg-black/75 sm:px-[68px] sm:pt-12 sm:pb-12">{children}</div>
+        <div className="ui-enter-soft w-full bg-black px-6 pt-4 pb-10 sm:max-w-[450px] sm:rounded-xl sm:border sm:border-white/10 sm:bg-black/75 sm:px-[68px] sm:pt-12 sm:pb-12 sm:shadow-[0_24px_80px_rgba(0,0,0,.4)]">{children}</div>
       </main>
       <div className="relative z-10 border-t border-white/10 bg-black/75 max-sm:border-[#333]">
         <SiteFooter compact />

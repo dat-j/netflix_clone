@@ -36,11 +36,11 @@ export function PosterWall({ className, intensity = "hero" }: { className?: stri
   return (
     <div aria-hidden className={cn("absolute inset-0 overflow-hidden bg-black", className)}>
       <div
-        className="absolute top-1/2 left-1/2 grid w-[150vw] min-w-[1400px] -translate-x-1/2 -translate-y-1/2 -rotate-[8deg] gap-3 opacity-90"
+        className="absolute top-1/2 left-1/2 grid w-[150vw] min-w-[1400px] -translate-x-1/2 -translate-y-1/2 -rotate-[8deg] gap-3 opacity-90 motion-safe:animate-[poster-drift_18s_ease-in-out_infinite_alternate]"
         style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
       >
         {Array.from({ length: cols * rows }, (_, i) => (
-          <div key={i} className="relative aspect-[2/3] overflow-hidden rounded-md shadow-lg shadow-black/50" style={tile(i)}>
+          <div key={i} className="relative aspect-[2/3] overflow-hidden rounded-md shadow-lg shadow-black/50 transition-transform duration-700 hover:scale-[1.03]" style={tile(i)}>
             <div className="absolute inset-x-[12%] bottom-[10%] space-y-1.5">
               <div className="h-[6px] w-3/4 rounded-full bg-white/35" />
               <div className="h-[4px] w-1/2 rounded-full bg-white/20" />

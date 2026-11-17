@@ -152,7 +152,7 @@ function AdminLayout({ email, children }: { email: string; children: ReactNode }
   return (
     <div className="admin-root flex min-h-dvh w-full flex-1 bg-zinc-100 text-zinc-900 [color-scheme:light]">
       {/* Sidebar desktop */}
-      <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col bg-zinc-950 text-zinc-300 lg:flex">
+      <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col border-r border-white/[0.04] bg-zinc-950 text-zinc-300 lg:flex">
         <Sidebar email={email} pathname={pathname} />
       </aside>
 
@@ -160,7 +160,7 @@ function AdminLayout({ email, children }: { email: string; children: ReactNode }
       {open ? (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col bg-zinc-950 text-zinc-300 shadow-2xl">
+          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col bg-zinc-950 text-zinc-300 shadow-2xl animate-[sheet-in_.24s_cubic-bezier(.16,1,.3,1)_both]">
             <button className="absolute top-3 right-3 rounded p-1 text-zinc-400 hover:text-white" onClick={() => setOpen(false)} aria-label="Đóng menu">
               <X className="size-5" />
             </button>
@@ -177,7 +177,7 @@ function AdminLayout({ email, children }: { email: string; children: ReactNode }
           <Brand dark={false} />
           <span className="ml-auto truncate text-[13px] font-medium text-zinc-600">{current?.label}</span>
         </header>
-        <main className="mx-auto w-full max-w-[1400px] flex-1 px-3 py-4 sm:px-5 sm:py-6 lg:px-8">{children}</main>
+        <main className="admin-content mx-auto w-full max-w-[1400px] flex-1 px-3 py-4 sm:px-5 sm:py-6 lg:px-8">{children}</main>
       </div>
     </div>
   );
@@ -220,7 +220,7 @@ function Sidebar({ email, pathname }: { email: string; pathname: string }) {
               href={n.href}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium transition-colors",
+                "flex h-10 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors",
                 active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100",
               )}
             >

@@ -35,7 +35,7 @@ export function Faq() {
   return (
     <Accordion.Root type="single" collapsible className="space-y-2">
       {FAQ.map((item, i) => (
-        <Accordion.Item key={i} value={`q${i}`} className="overflow-hidden">
+        <Accordion.Item key={i} value={`q${i}`} className="overflow-hidden rounded-xl border border-white/[0.06]">
           <Accordion.Header>
             <Accordion.Trigger className="group flex w-full items-center justify-between gap-4 bg-[#2d2d2d] px-6 py-5 text-left text-[clamp(1.05rem,1.5vw,1.5rem)] transition-colors hover:bg-[#414141]">
               {item.q}

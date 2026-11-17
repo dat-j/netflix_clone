@@ -10,7 +10,7 @@ import { JobStatusBadge } from "../ui/status";
 
 function Tile({ label, value, sub, icon, href, tone = "zinc" }: { label: string; value: ReactNode; sub?: ReactNode; icon: ReactNode; href?: string; tone?: "zinc" | "red" | "blue" }) {
   const body = (
-    <div className={cn("flex h-full flex-col gap-1 rounded-lg border bg-white px-4 py-3 shadow-xs transition-colors", href && "hover:border-zinc-300", tone === "red" ? "border-red-200" : "border-zinc-200")}>
+    <div className={cn("admin-card flex h-full flex-col gap-1 rounded-xl border bg-white px-4 py-3.5 shadow-xs", href && "hover:border-zinc-300", tone === "red" ? "border-red-200" : "border-zinc-200")}>
       <div className="flex items-center justify-between text-[12px] font-medium text-zinc-500">
         {label}
         <span className={cn(tone === "red" ? "text-red-500" : tone === "blue" ? "text-indigo-500" : "text-zinc-400")}>{icon}</span>
@@ -43,7 +43,7 @@ export function OverviewSection() {
           <ErrorState error={stats.error} onRetry={() => stats.refetch()} compact />
         </Card>
       ) : (
-        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5 ui-stagger">
           {!s ? (
             Array.from({ length: 10 }, (_, i) => <Skeleton key={i} className="h-[88px] rounded-lg" />)
           ) : (

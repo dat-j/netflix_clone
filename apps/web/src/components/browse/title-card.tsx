@@ -73,18 +73,18 @@ export function TitleCardTile({ card, hoverKey, variant = "default", align = "ce
       }}
       aria-label={card.rank ? `Top ${card.rank}: ${card.name}` : card.name}
       data-testid="title-card"
-      className={cn("group/card block rounded-[4px] outline-offset-4", className)}
+      className={cn("group/card block rounded-[6px] outline-offset-4 transition-transform duration-300 hover:z-[2] focus-visible:z-[2]", className)}
     >
       {variant === "top10" && card.rank ? (
         <div data-card-art className="relative flex aspect-[16/9] w-full items-stretch">
           <RankNumeral rank={card.rank} />
           <div className="relative ml-auto h-full w-1/2 overflow-hidden rounded-[3px] shadow-lg shadow-black/50">
-            <Artwork image={card.poster ?? card.backdrop} alt="" sizes={POSTER_SIZES} preload={preload} fallbackLabel={card.name} />
+            <Artwork image={card.poster ?? card.backdrop} alt="" sizes={POSTER_SIZES} preload={preload} fallbackLabel={card.name} imgClassName="movie-art" />
           </div>
         </div>
       ) : (
-        <div data-card-art className="relative aspect-video w-full overflow-hidden rounded-[4px] bg-[#222]">
-          <Artwork image={card.backdrop ?? card.poster} alt="" sizes={CARD_SIZES} preload={preload} fallbackLabel={card.backdrop || card.poster ? undefined : card.name} />
+        <div data-card-art className="movie-card-frame relative aspect-video w-full overflow-hidden rounded-[6px] border border-white/[0.04] bg-[#222]">
+          <Artwork image={card.backdrop ?? card.poster} alt="" sizes={CARD_SIZES} preload={preload} fallbackLabel={card.backdrop || card.poster ? undefined : card.name} imgClassName="movie-art" />
           {(card.backdrop || card.poster) && <CardTitleOverlay card={card} />}
           {card.isNew && !progress && (
             <span className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-t-[3px] bg-brand px-[0.6em] py-[0.15em] text-[clamp(0.55rem,0.75vw,0.75rem)] font-bold whitespace-nowrap text-brand-ink">

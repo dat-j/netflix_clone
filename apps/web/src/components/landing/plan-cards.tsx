@@ -61,7 +61,7 @@ export function PlanCards({ action }: { action?: (plan: PlanDto) => React.ReactN
         <li
           key={p.id}
           className={cn(
-            "relative flex flex-col overflow-hidden rounded-xl border bg-[#141414] p-2 transition-transform duration-300 hover:-translate-y-1",
+            "interactive-surface relative flex flex-col overflow-hidden rounded-xl border bg-[#141414] p-2",
             i === popularIdx ? "border-brand/70 shadow-[0_0_0_1px_var(--brand),0_20px_60px_-20px_rgb(255_90_60/0.5)]" : "border-white/15",
           )}
         >

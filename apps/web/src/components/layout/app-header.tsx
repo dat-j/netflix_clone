@@ -37,8 +37,8 @@ export function AppHeader() {
   return (
     <header
       className={cn(
-        "fixed inset-x-0 top-0 z-40 h-header transition-colors duration-500 tg:pt-[var(--tg-top)]",
-        scrolled ? "bg-bg" : "bg-transparent",
+        "fixed inset-x-0 top-0 z-40 h-header border-b transition-[background-color,border-color,backdrop-filter] duration-500 tg:pt-[var(--tg-top)]",
+        scrolled ? "border-white/[0.06] bg-[#101010]/90 shadow-[0_8px_28px_rgba(0,0,0,.18)] backdrop-blur-2xl" : "border-transparent bg-transparent",
       )}
     >
       {/* soft top scrim so white text stays readable over bright artwork */}
@@ -62,8 +62,8 @@ export function AppHeader() {
                   href={n.href}
                   aria-current={isActive(pathname, n.href) ? "page" : undefined}
                   className={cn(
-                    "text-sm whitespace-nowrap transition-colors duration-300",
-                    isActive(pathname, n.href) ? "font-bold text-white" : "text-[#e5e5e5] hover:text-[#b3b3b3]",
+                    "relative py-2 text-sm whitespace-nowrap transition-colors duration-300 after:absolute after:inset-x-0 after:-bottom-[1px] after:h-[2px] after:origin-left after:rounded-full after:bg-brand after:transition-transform after:duration-300",
+                    isActive(pathname, n.href) ? "font-bold text-white after:scale-x-100" : "text-white/75 after:scale-x-0 hover:text-white hover:after:scale-x-100",
                   )}
                 >
                   {n.label}

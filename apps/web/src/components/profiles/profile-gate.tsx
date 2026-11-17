@@ -85,7 +85,7 @@ export function ProfileGate() {
                 aria-label={manage ? `Chỉnh sửa hồ sơ ${p.name}` : `Chọn hồ sơ ${p.name}`}
                 data-testid="profile-tile"
               >
-                <span className="relative block aspect-square w-full overflow-hidden rounded-md ring-white transition-[box-shadow] duration-200 group-hover:ring-[3px] group-focus-visible:ring-[3px]">
+                <span className="relative block aspect-square w-full overflow-hidden rounded-lg ring-white transition-[box-shadow,transform] duration-300 group-hover:scale-[1.035] group-hover:ring-[3px] group-focus-visible:ring-[3px]">
                   <ProfileAvatar profile={p} className={cn("size-full transition-[filter]", manage && "brightness-[.45]")} />
                   {manage && (
                     <span className="absolute inset-0 flex items-center justify-center">

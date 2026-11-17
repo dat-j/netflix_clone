@@ -25,13 +25,13 @@ export default function LandingPage() {
           <LogoLink />
           <Link
             href="/login"
-            className="rounded bg-brand px-4 py-1.5 text-sm font-semibold text-brand-ink transition-colors hover:bg-brand-hover"
+            className="brand-glow rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-ink transition-[background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-brand-hover active:translate-y-0"
             data-testid="landing-login"
           >
             Đăng nhập
           </Link>
         </header>
-        <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center px-6 pt-8 pb-24 text-center">
+        <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center px-6 pt-8 pb-24 text-center ui-enter">
           <h1 id="hero-title" className="text-[clamp(2rem,4.6vw,4rem)] leading-[1.1] font-black tracking-tight text-balance">
             {BRAND.tagline}
           </h1>
@@ -52,9 +52,9 @@ export default function LandingPage() {
           <h2 id="reasons" className="mb-5 text-[clamp(1.25rem,1.8vw,1.6rem)] font-bold">
             Thêm lý do để tham gia
           </h2>
-          <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 ui-stagger">
             {REASONS.map(({ icon: Icon, title, body, tint }) => (
-              <li key={title} className={`relative flex min-h-60 flex-col rounded-2xl bg-gradient-to-br ${tint} to-[#151a2e] to-80% p-6 pb-20`}>
+              <li key={title} className={`interactive-surface relative flex min-h-60 flex-col rounded-2xl border border-white/10 bg-gradient-to-br ${tint} to-[#151a2e] to-80% p-6 pb-20`}>
                 <h3 className="text-[1.4rem] leading-tight font-bold">{title}</h3>
                 <p className="mt-3 text-white/70">{body}</p>
                 <Icon className="absolute right-5 bottom-5 size-14 text-brand drop-shadow-[0_0_18px_rgb(255_90_60/.45)]" strokeWidth={1.5} aria-hidden />

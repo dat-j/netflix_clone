@@ -75,7 +75,7 @@ export function Billboard({ title }: { title: TitleDetail }) {
         <div className="scrim-bottom absolute inset-x-0 bottom-0 h-[14.7vw]" />
       </div>
 
-      <div className="absolute inset-x-gutter bottom-[35%] flex flex-col items-start">
+      <div className="absolute inset-x-gutter bottom-[35%] flex flex-col items-start animate-[rise-in_.8s_cubic-bezier(.16,1,.3,1)_both]">
         <div className={cn("w-[min(40vw,640px)] origin-bottom-left transition-transform duration-[1300ms] ease-out-expo", compact && "scale-[0.72]")}>
           {title.logo ? (
             <div className="relative aspect-[3/1] w-full">

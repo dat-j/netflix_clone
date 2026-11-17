@@ -78,7 +78,7 @@ export function Row({ row, rowIndex = 0 }: { row: HomeRow; rowIndex?: number }) 
   if (items.length === 0) return null;
 
   return (
-    <section aria-labelledby={`row-${row.id}`} className="group/row relative my-[3vw] md:my-[2.2vw]" data-testid="browse-row">
+    <section aria-labelledby={`row-${row.id}`} className="group/row relative my-[3vw] md:my-[2.2vw] motion-safe:animate-[rise-in_.5s_cubic-bezier(.16,1,.3,1)_both]" data-testid="browse-row">
       <RowHeader id={`row-${row.id}`} title={row.title} href={mapApiHref(row.href)} />
       <Slider items={items} rowKey={`${row.id}-${rowIndex}`} variant={variant} onNearEnd={loadMore} hasMore={hasMore} eager={rowIndex === 0} />
     </section>

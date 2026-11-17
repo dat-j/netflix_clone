@@ -6,7 +6,7 @@ export default function MainLayout({ children }: LayoutProps<"/">) {
   return (
     <>
       <AppHeader />
-      <main id="main" className="min-h-dvh">
+      <main id="main" className="main-content min-h-dvh">
         {children}
       </main>
       <SiteFooter compact className="tg:hidden" />

@@ -26,7 +26,7 @@ export function BrowseHome({ type }: { type?: TitleType }) {
       {isPending ? (
         <>
           <BillboardSkeleton />
-          <div className="relative z-[1]">
+          <div className="relative z-[1] ui-enter">
             {Array.from({ length: 4 }, (_, i) => (
               <RowSkeleton key={i} />
             ))}
@@ -45,7 +45,7 @@ export function BrowseHome({ type }: { type?: TitleType }) {
           ) : (
             <div className="h-[calc(var(--header-h)+5rem)]" />
           )}
-          <div className="relative z-[1]">
+          <div className="relative z-[1] ui-enter">
             <SubscriptionBanner />
             {data.rows.filter((r) => r.items.length > 0).length === 0 ? (
               <EmptyPanel icon={<Clapperboard className="size-14" />} title="Chưa có nội dung">

@@ -38,7 +38,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       type={type}
       disabled={disabled || loading}
       className={cn(
-        "inline-flex shrink-0 items-center rounded-md font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed",
+        "inline-flex shrink-0 items-center rounded-lg font-medium whitespace-nowrap transition-[background-color,color,box-shadow,transform] duration-200 active:scale-[.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed",
         variants[variant],
         sizes[size],
         className,
@@ -147,7 +147,7 @@ export function Badge({ tone = "neutral", children, className, title }: { tone?:
 
 export function Card({ children, className, title, actions }: { children: ReactNode; className?: string; title?: ReactNode; actions?: ReactNode }) {
   return (
-    <section className={cn("rounded-lg border border-zinc-200 bg-white shadow-xs", className)}>
+    <section className={cn("admin-card rounded-xl border border-zinc-200 bg-white shadow-sm", className)}>
       {title || actions ? (
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2.5">
           <h2 className="text-sm font-semibold text-zinc-900">{title}</h2>
