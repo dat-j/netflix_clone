@@ -1,0 +1,21 @@
+# BuildKit picks this up automatically for infra/bot.Dockerfile (context = repo root).
+**/node_modules
+**/dist
+**/.turbo
+**/*.tsbuildinfo
+packages/db/generated
+.env
+.env.*
+!.env.example
+.git
+reports
+tmp
+apps/bot/test
+apps/web/*
+!apps/web/package.json
+apps/api/*
+!apps/api/package.json
+apps/worker/*
+!apps/worker/package.json
+packages/shared/*
+!packages/shared/package.json

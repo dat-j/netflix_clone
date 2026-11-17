@@ -114,6 +114,17 @@ export class AuthService {
     return this.createSession(user, client);
   }
 
+  /**
+   * Tạo phiên cho một user đã được xác thực bằng cách khác (vd. Telegram initData) — cùng cơ chế với login.
+   * Ném 401 nếu user không tồn tại, 403 nếu bị khóa.
+   */
+  async issueSessionForUser(userId: string, client: ClientInfo): Promise<IssuedTokens> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new ApiException(401, "UNAUTHENTICATED", "Tài khoản không tồn tại");
+    if (user.disabledAt) throw new ApiException(403, "FORBIDDEN", "Tài khoản đã bị khóa");
+    return this.createSession(user, client);
+  }
+
   // ───────── refresh xoay vòng ─────────
   async refresh(token: string | undefined, client: ClientInfo): Promise<IssuedTokens> {
     const invalid = () => new ApiException(401, "UNAUTHENTICATED", "Phiên đăng nhập không hợp lệ");

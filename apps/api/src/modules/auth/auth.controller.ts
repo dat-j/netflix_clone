@@ -17,9 +17,9 @@ const forgotSchema = z.object({ email: emailSchema });
 const resetSchema = z.object({ token: z.string().min(10).max(200), password: passwordSchema });
 
 /** Giới hạn chặt cho các endpoint nhạy cảm (đoán mật khẩu, spam mail). */
-const STRICT = { default: { limit: 20, ttl: 60_000 } };
+export const STRICT = { default: { limit: 20, ttl: 60_000 } };
 
-function clientInfo(req: AppRequest): ClientInfo {
+export function clientInfo(req: AppRequest): ClientInfo {
   const ua = req.headers["user-agent"];
   return { userAgent: typeof ua === "string" ? ua : null, ip: req.ip ?? null };
 }

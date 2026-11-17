@@ -18,6 +18,7 @@ import { BRAND } from "@/lib/brand";
 import { qk, useDeviceSessions, useMe, useProfiles } from "@/lib/queries";
 import { toast } from "@/lib/toast";
 import { cn, formatDate, formatPrice, formatRelative, qualityLabel } from "@/lib/utils";
+import { TelegramSection } from "./telegram-section";
 
 const STATUS_LABEL: Record<SubscriptionDto["status"], string> = {
   ACTIVE: "Đang hoạt động",
@@ -26,7 +27,7 @@ const STATUS_LABEL: Record<SubscriptionDto["status"], string> = {
   EXPIRED: "Đã hết hạn",
 };
 
-function Section({ title, children, className }: { title: string; children: React.ReactNode; className?: string }) {
+export function Section({ title, children, className }: { title: string; children: React.ReactNode; className?: string }) {
   return (
     <section className={cn("grid gap-3 border-t border-white/10 py-6 md:grid-cols-[14rem_1fr] md:gap-8", className)} aria-label={title}>
       <h2 className="text-sm font-semibold tracking-wide text-white/50 uppercase">{title}</h2>
@@ -89,6 +90,7 @@ export function AccountPage() {
 
           <ProfilesSection />
           <DevicesSection />
+          <TelegramSection />
 
           <Section title="Đăng xuất">
             <Button variant="outline" onClick={() => void signOut()}>

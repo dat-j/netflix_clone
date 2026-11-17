@@ -9,7 +9,7 @@ export default function MainLayout({ children }: LayoutProps<"/">) {
       <main id="main" className="min-h-dvh">
         {children}
       </main>
-      <SiteFooter compact />
+      <SiteFooter compact className="tg:hidden" />
       <HoverPreviewLayer />
     </>
   );

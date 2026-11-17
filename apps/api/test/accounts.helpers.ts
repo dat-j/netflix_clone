@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import type { Response } from "supertest";
 import { AppModule } from "../src/app.module.js";
 import { ApiExceptionFilter } from "../src/common/api-exception.js";
+import { csrfOriginCheck } from "../src/common/csrf.js";
 
 /** Dựng app in-process giống main.ts (prefix v1, cookie-parser, filter lỗi). */
 export async function createTestApp(): Promise<NestExpressApplication> {
@@ -13,6 +14,7 @@ export async function createTestApp(): Promise<NestExpressApplication> {
   app.set("trust proxy", "loopback");
   app.setGlobalPrefix("v1");
   app.use(cookieParser());
+  app.use(csrfOriginCheck);
   app.useGlobalFilters(new ApiExceptionFilter());
   await app.init();
   return app;

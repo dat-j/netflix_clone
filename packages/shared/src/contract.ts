@@ -23,6 +23,15 @@
  *   GET    /auth/sessions            [auth] → DeviceSession[]
  *   DELETE /auth/sessions/:id        [auth] → 204
  *
+ * TELEGRAM (Mini App). 503 TELEGRAM_UNAVAILABLE nếu server chưa cấu hình TELEGRAM_BOT_TOKEN;
+ * 401 TELEGRAM_INIT_DATA_INVALID nếu initData sai chữ ký / quá hạn.
+ *   POST   /auth/telegram            TelegramInitDataBody → TelegramAuthResponse
+ *            (đã liên kết: set cookie như login + tự chọn profile khi xác định được; chưa liên kết: không set cookie)
+ *   GET    /auth/telegram/link       [auth] → TelegramLinkStatus
+ *   POST   /auth/telegram/link       [auth] TelegramInitDataBody → TelegramLinkResult (idempotent; tự chọn profile như trên nếu chưa có `pid`)
+ *            409 TELEGRAM_LINK_CONFLICT (Telegram id đã gắn user khác / user đã gắn Telegram id khác)
+ *   DELETE /auth/telegram/link       [auth] → 204
+ *
  * PROFILES [auth]
  *   GET    /profiles                 → ProfileDto[]
  *   POST   /profiles                 ProfileInput → ProfileDto
@@ -100,7 +109,8 @@
 export type ApiErrorCode =
   | "VALIDATION" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT"
   | "INVALID_CREDENTIALS" | "EMAIL_TAKEN" | "TOKEN_INVALID" | "PROFILE_REQUIRED" | "PROFILE_LIMIT"
-  | "NO_SUBSCRIPTION" | "TOO_MANY_STREAMS" | "SESSION_ENDED" | "NOT_PLAYABLE" | "RATE_LIMITED" | "INTERNAL";
+  | "NO_SUBSCRIPTION" | "TOO_MANY_STREAMS" | "SESSION_ENDED" | "NOT_PLAYABLE" | "RATE_LIMITED" | "INTERNAL"
+  | "TELEGRAM_UNAVAILABLE" | "TELEGRAM_INIT_DATA_INVALID" | "TELEGRAM_LINK_CONFLICT";
 
 export interface ApiError {
   statusCode: number;
@@ -156,6 +166,37 @@ export interface DeviceSession {
   createdAt: string;
   current: boolean;
 }
+
+// ───────── Telegram Mini App ─────────
+/** `initData` là chuỗi query thô từ `window.Telegram.WebApp.initData` (không parse/sửa ở client). */
+export interface TelegramInitDataBody { initData: string }
+export interface TelegramLinkDto {
+  /** Telegram user id (chuỗi vì có thể vượt 2^53) */
+  telegramUserId: string;
+  username: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  photoUrl: string | null;
+  linkedAt: string;
+  lastSeenAt: string;
+}
+export interface TelegramLinkStatus {
+  /** false nếu server chưa cấu hình bot */
+  available: boolean;
+  link: TelegramLinkDto | null;
+}
+export interface TelegramLinkResult extends TelegramLinkStatus {
+  /** Profile đang/đã được chọn sau khi liên kết (null → cần qua màn chọn hồ sơ) */
+  profile: ProfileDto | null;
+}
+export type TelegramAuthResponse =
+  | {
+      linked: true;
+      user: UserDto;
+      /** Profile đã được chọn tự động (cookie `pid` đã set), null → web chuyển qua màn chọn hồ sơ */
+      profile: ProfileDto | null;
+    }
+  | { linked: false; telegramUser: { firstName: string | null; username: string | null } };
 
 export interface ProfileDto {
   id: string;

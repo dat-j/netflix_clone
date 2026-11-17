@@ -60,8 +60,9 @@ function useAfterAuth() {
     qc.setQueryData(qk.me, undefined);
     void res.user;
     const next = safeNextPath(params.get("next"), "/browse");
-    // Everyone passes through the profile gate after signing in (like the reference product)
-    router.replace(next.startsWith("/profiles") ? next : `/profiles${next !== "/browse" ? `?next=${encodeURIComponent(next)}` : ""}`);
+    // Everyone passes through the profile gate after signing in (like the reference product).
+    // Telegram Mini App linking (/tg/...) continues first; it picks or asks for a profile itself.
+    router.replace(next.startsWith("/profiles") || next.startsWith("/tg/") ? next : `/profiles${next !== "/browse" ? `?next=${encodeURIComponent(next)}` : ""}`);
   };
 }
 
@@ -91,6 +92,12 @@ function useFormState<K extends string>(initial: Record<K, string>, schema: z.Zo
 }
 
 // ───────── login ─────────
+/** Keep `?next=` when switching between sign-in and sign-up (e.g. Telegram linking flow). */
+function withNext(path: string, params: { get(name: string): string | null }) {
+  const next = params.get("next");
+  return next ? `${path}?next=${encodeURIComponent(safeNextPath(next))}` : path;
+}
+
 export function LoginForm() {
   const params = useSearchParams();
   const afterAuth = useAfterAuth();
@@ -142,7 +149,7 @@ export function LoginForm() {
       </div>
       <p className="pt-6 text-white/70">
         Bạn mới sử dụng {BRAND.name}?{" "}
-        <Link href="/signup" className="font-semibold text-white hover:underline">
+        <Link href={withNext("/signup", params)} className="font-semibold text-white hover:underline">
           Đăng ký ngay.
         </Link>
       </p>
@@ -205,7 +212,7 @@ export function SignupForm() {
       </p>
       <p className="pt-4 text-white/70">
         Đã có tài khoản?{" "}
-        <Link href="/login" className="font-semibold text-white hover:underline">
+        <Link href={withNext("/login", params)} className="font-semibold text-white hover:underline">
           Đăng nhập.
         </Link>
       </p>

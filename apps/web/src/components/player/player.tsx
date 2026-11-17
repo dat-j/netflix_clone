@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
 import { api } from "@/lib/api/client";
+import { canTelegramFullscreen, getTelegram, reauthUrl } from "@/lib/telegram";
 import { cn } from "@/lib/utils";
 import { PlayerControllerContext, type PlayerController } from "./controller";
 import { BottomBar, TopBar, TouchCenterControls } from "./controls/chrome";
@@ -159,7 +160,7 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
     const fsv = video as FsVideo;
     setCaps({
       pip: typeof document !== "undefined" && !!document.pictureInPictureEnabled && !video.disablePictureInPicture,
-      fullscreen: !!document.fullscreenEnabled || !!(document as FsDocument & { webkitFullscreenEnabled?: boolean }).webkitFullscreenEnabled || !!fsv.webkitSupportsFullscreen,
+      fullscreen: canTelegramFullscreen() || !!document.fullscreenEnabled || !!(document as FsDocument & { webkitFullscreenEnabled?: boolean }).webkitFullscreenEnabled || !!fsv.webkitSupportsFullscreen,
     });
 
     // Persist volume / mute / speed
@@ -238,7 +239,7 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
     const e = sess.error;
     if (!e) return;
     const here = window.location.pathname + window.location.search;
-    if (e.status === 401 || e.code === "UNAUTHENTICATED") router.replace(`/login?next=${encodeURIComponent(here)}&expired=1`);
+    if (e.status === 401 || e.code === "UNAUTHENTICATED") router.replace(reauthUrl(here) ?? `/login?next=${encodeURIComponent(here)}&expired=1`);
     else if (e.code === "PROFILE_REQUIRED") router.replace(`/profiles?next=${encodeURIComponent(here)}`);
   }, [sess.error, router]);
 
@@ -255,6 +256,8 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
   const goBack = useCallback(() => {
     const doc = document as FsDocument;
     if (doc.fullscreenElement) void doc.exitFullscreen().catch(() => undefined);
+    const tg = getTelegram();
+    if (tg?.isFullscreen) tg.exitFullscreen?.();
     const nav = (window as Window & { navigation?: { canGoBack?: boolean } }).navigation;
     const canGoBack =
       nav?.canGoBack ?? (window.history.length > 1 && !!document.referrer && document.referrer.startsWith(window.location.origin));
@@ -262,7 +265,8 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
     else router.replace("/browse");
   }, [router]);
 
-  const toggleFullscreen = useCallback(() => {
+  /** Browser Fullscreen API on the player root (iOS: native <video> fullscreen). */
+  const toggleDomFullscreen = useCallback(() => {
     const doc = document as FsDocument;
     const root = rootRef.current;
     const video = videoRef.current as FsVideo | null;
@@ -280,6 +284,18 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
         .catch(() => undefined);
     } else video?.webkitEnterFullscreen?.(); // iOS Safari: only the <video> can go fullscreen
   }, [touch]);
+
+  /**
+   * Inside the Telegram Mini App (Bot API 8.0+) the whole Mini App goes fullscreen through Telegram — the webview's
+   * own Fullscreen API is often unavailable there. The player is `fixed inset-0`, so it fills the screen.
+   * `fullscreenFailed` (e.g. unsupported client) falls back to the browser API.
+   */
+  const toggleFullscreen = useCallback(() => {
+    const tg = getTelegram();
+    if (!canTelegramFullscreen(tg)) return toggleDomFullscreen();
+    if (tg.isFullscreen) tg.exitFullscreen();
+    else tg.requestFullscreen();
+  }, [toggleDomFullscreen]);
 
   const togglePip = useCallback(() => {
     const v = videoRef.current;
@@ -432,6 +448,7 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
         case "escape":
           if (st.menu) st.setUi({ menu: null });
           else if ((document as FsDocument).fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+          else if (getTelegram()?.isFullscreen) getTelegram()?.exitFullscreen?.();
           else goBack();
           break;
       }
@@ -451,15 +468,25 @@ function PlayerInner({ titleId, episodeId, store }: { titleId: string; episodeId
     const onPipOut = () => store.getState().setUi({ pip: false });
     document.addEventListener("fullscreenchange", onFs);
     document.addEventListener("webkitfullscreenchange", onFs);
+    const tg = getTelegram();
+    const onTgFs = () => store.getState().setUi({ fullscreen: !!tg?.isFullscreen });
+    const onTgFsFailed = (e: unknown) => {
+      // Already fullscreen is fine; anything else → try the browser API instead
+      if ((e as { error?: string } | undefined)?.error !== "ALREADY_FULLSCREEN") toggleDomFullscreen();
+    };
+    tg?.onEvent("fullscreenChanged", onTgFs);
+    tg?.onEvent("fullscreenFailed", onTgFsFailed);
     video?.addEventListener("enterpictureinpicture", onPipIn);
     video?.addEventListener("leavepictureinpicture", onPipOut);
     return () => {
       document.removeEventListener("fullscreenchange", onFs);
       document.removeEventListener("webkitfullscreenchange", onFs);
+      tg?.offEvent("fullscreenChanged", onTgFs);
+      tg?.offEvent("fullscreenFailed", onTgFsFailed);
       video?.removeEventListener("enterpictureinpicture", onPipIn);
       video?.removeEventListener("leavepictureinpicture", onPipOut);
     };
-  }, [store]);
+  }, [store, toggleDomFullscreen]);
 
   // ───────── Media Session (lock screen, hardware keys) ─────────
   useEffect(() => {

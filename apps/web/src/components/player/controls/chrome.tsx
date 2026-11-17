@@ -32,7 +32,7 @@ export function TopBar() {
   return (
     <div
       className={cn(
-        "pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start bg-gradient-to-b from-black/75 via-black/30 to-transparent px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-16 transition-opacity duration-300 md:px-6 md:pt-5",
+        "pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start bg-gradient-to-b from-black/75 via-black/30 to-transparent px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-16 tg:pt-[max(0.75rem,var(--tg-top))] transition-opacity duration-300 md:px-6 md:pt-5",
         visible ? "opacity-100" : "opacity-0",
       )}
     >
@@ -40,7 +40,8 @@ export function TopBar() {
         label="Quay lại"
         onClick={goBack}
         data-testid="player-back"
-        className={cn("size-12 [&>svg]:size-8 md:size-14 md:[&>svg]:size-10", visible ? "pointer-events-auto" : "pointer-events-none")}
+        // Inside Telegram the native BackButton (Telegram header / fullscreen overlay) replaces this arrow
+        className={cn("size-12 tg:hidden [&>svg]:size-8 md:size-14 md:[&>svg]:size-10", visible ? "pointer-events-auto" : "pointer-events-none")}
         tabIndex={visible ? 0 : -1}
       >
         <BackArrowIcon />

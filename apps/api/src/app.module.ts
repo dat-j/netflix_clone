@@ -10,6 +10,7 @@ import { CatalogModule } from "./modules/catalog/catalog.module.js";
 import { PlaybackModule } from "./modules/playback/playback.module.js";
 import { AdminContentModule } from "./modules/admin-content/admin-content.module.js";
 import { TmdbModule } from "./modules/tmdb/tmdb.module.js";
+import { TelegramModule } from "./modules/telegram/telegram.module.js";
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { TmdbModule } from "./modules/tmdb/tmdb.module.js";
     PlaybackModule,
     AdminContentModule,
     TmdbModule,
+    TelegramModule,
   ],
   controllers: [HealthController],
 })

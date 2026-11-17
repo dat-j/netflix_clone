@@ -3,11 +3,13 @@
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MotionConfig } from "motion/react";
 import { Tooltip } from "radix-ui";
-import { useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { ApiRequestError } from "@/lib/api/errors";
 import { clearAuthHint } from "@/lib/auth-hint";
 import { isPublic, loginUrl, profilesUrl } from "@/lib/routes";
 import { Toaster } from "@/components/ui/toaster";
+import { TelegramBridge } from "@/components/telegram/telegram-bridge";
+import { reauthUrl } from "@/lib/telegram";
 import { hydrateUIPrefs } from "@/lib/ui-store";
 
 let redirecting = false;
@@ -27,6 +29,9 @@ function handleSessionError(error: unknown) {
     void fetch("/api/v1/auth/logout", { method: "POST", credentials: "include" })
       .catch(() => undefined)
       .finally(() => {
+        // Inside the Telegram Mini App the session can be restored silently from initData
+        const tg = reauthUrl(here);
+        if (tg) return window.location.assign(tg);
         const url = loginUrl(here);
         // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- full reset after session loss
         window.location.assign(`${url}${url.includes("?") ? "&" : "?"}expired=1`);
@@ -65,6 +70,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <Tooltip.Provider delayDuration={300}>
           {children}
           <Toaster />
+          <Suspense fallback={null}>
+            <TelegramBridge />
+          </Suspense>
         </Tooltip.Provider>
       </MotionConfig>
     </QueryClientProvider>

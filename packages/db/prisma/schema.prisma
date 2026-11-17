@@ -29,6 +29,7 @@ model User {
   subscriptions Subscription[]
   payments      Payment[]
   emailTokens   EmailToken[]
+  telegram      TelegramAccount?
 }
 
 /// Một phiên đăng nhập trên một thiết bị (refresh token xoay vòng).
@@ -66,6 +67,22 @@ model EmailToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, type])
+}
+
+/// Liên kết tài khoản Telegram (Mini App / bot). Một user ↔ tối đa một Telegram id và ngược lại.
+model TelegramAccount {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  telegramUserId BigInt   @unique
+  userId         String   @unique @db.Uuid
+  username       String?
+  firstName      String?
+  lastName       String?
+  languageCode   String?
+  photoUrl       String?
+  linkedAt       DateTime @default(now())
+  lastSeenAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Profile {

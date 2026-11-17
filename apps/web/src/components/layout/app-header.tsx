@@ -37,7 +37,7 @@ export function AppHeader() {
   return (
     <header
       className={cn(
-        "fixed inset-x-0 top-0 z-40 h-header transition-colors duration-500",
+        "fixed inset-x-0 top-0 z-40 h-header transition-colors duration-500 tg:pt-[var(--tg-top)]",
         scrolled ? "bg-bg" : "bg-transparent",
       )}
     >
@@ -50,7 +50,8 @@ export function AppHeader() {
         )}
       />
       <div className="relative flex h-full items-center px-gutter">
-        <LogoLink href="/browse" className="mr-[clamp(0.75rem,2.5vw,2.75rem)] shrink-0 [&_span]:text-[1.6rem] md:[&_span]:text-[1.85rem]" />
+        {/* Telegram's own header already shows the bot name: drop the wordmark to keep the header compact */}
+        <LogoLink href="/browse" className="mr-[clamp(0.75rem,2.5vw,2.75rem)] shrink-0 tg:hidden [&_span]:text-[1.6rem] md:[&_span]:text-[1.85rem]" />
 
         {/* desktop nav */}
         <nav aria-label="Điều hướng chính" className="max-lg:hidden">

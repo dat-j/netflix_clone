@@ -11,7 +11,21 @@ function publicPrefix(): string {
 }
 export const refreshCookiePath = () => `${publicPrefix()}/auth`;
 
+/**
+ * AUTH_COOKIE_SAMESITE=lax (mặc định) | none.
+ * `none` chỉ cần khi web chạy trong iframe khác site (Telegram Web nhúng Mini App): cookie Lax không được gửi/lưu ở đó.
+ * `none` bắt buộc Secure (HTTPS) và nên đi kèm AUTH_COOKIE_PARTITIONED=true (CHIPS) để trình duyệt chặn cookie bên thứ ba
+ * vẫn lưu được (theo partition của top-level site). Khi bật `none`, `csrfOriginCheck` (common/csrf.ts) chặn request
+ * ghi dữ liệu có Origin lạ để bù cho việc mất bảo vệ CSRF của SameSite.
+ */
+export function crossSiteCookies(): boolean {
+  return (process.env.AUTH_COOKIE_SAMESITE ?? "lax").trim().toLowerCase() === "none";
+}
+
 function base(): CookieOptions {
+  if (crossSiteCookies()) {
+    return { httpOnly: true, sameSite: "none", secure: true, partitioned: process.env.AUTH_COOKIE_PARTITIONED === "true" };
+  }
   return { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production" };
 }
 

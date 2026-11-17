@@ -4,6 +4,7 @@ import type { NestExpressApplication } from "@nestjs/platform-express";
 import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module.js";
 import { ApiExceptionFilter } from "./common/api-exception.js";
+import { csrfOriginCheck } from "./common/csrf.js";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -11,6 +12,7 @@ async function bootstrap() {
   app.set("trust proxy", process.env.TRUST_PROXY ?? "loopback, linklocal, uniquelocal");
   app.setGlobalPrefix("v1");
   app.use(cookieParser());
+  app.use(csrfOriginCheck);
   app.useGlobalFilters(new ApiExceptionFilter());
   app.enableShutdownHooks();
   // Railway/PaaS cấp PORT; local dùng API_PORT

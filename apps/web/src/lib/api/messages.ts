@@ -19,6 +19,9 @@ export const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   NOT_PLAYABLE: "Nội dung này hiện chưa thể phát.",
   RATE_LIMITED: "Bạn thao tác quá nhanh. Vui lòng đợi một lát rồi thử lại.",
   INTERNAL: "Đã có lỗi xảy ra. Vui lòng thử lại sau.",
+  TELEGRAM_UNAVAILABLE: "Đăng nhập qua Telegram tạm thời chưa khả dụng. Vui lòng thử lại sau.",
+  TELEGRAM_INIT_DATA_INVALID: "Phiên Telegram không hợp lệ hoặc đã hết hạn. Hãy đóng và mở lại BoxPhim từ Telegram.",
+  TELEGRAM_LINK_CONFLICT: "Tài khoản Telegram hoặc tài khoản BoxPhim này đã được liên kết với tài khoản khác.",
 };
 
 export function errorMessage(error: unknown, overrides: Partial<Record<ApiErrorCode, string>> = {}): string {

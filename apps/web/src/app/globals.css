@@ -29,6 +29,14 @@
   color-scheme: dark;
 }
 
+/* Telegram Mini App mode (`<html data-tg>`, set by lib/telegram.ts): compact header + Telegram safe areas
+   (non-zero only in Telegram fullscreen mode, where Telegram overlays its own buttons at the top). */
+@custom-variant tg (&:where([data-tg], [data-tg] *));
+:root[data-tg] {
+  --tg-top: calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px));
+  --header-h: calc(52px + var(--tg-top));
+}
+
 @media (max-width: 799px) {
   :root {
     --header-h: 56px;
