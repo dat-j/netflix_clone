@@ -7,12 +7,20 @@ import { cn } from "@/lib/utils";
 import { DetailView } from "./detail-view";
 
 /**
- * Detail modal rendered by the intercepted /title/[slug] route. Radix Dialog gives us focus trap,
- * Esc, scroll lock and aria; closing plays the exit animation then navigates back.
+ * Key the modal by the active route. Next can preserve parallel-route segments in its
+ * navigation cache; a route change must create a fresh modal state when it is reopened.
  */
 export function DetailModal({ slug }: { slug: string }) {
-  const router = useRouter();
   const pathname = usePathname();
+  return <DetailModalContent key={`${pathname}:${slug}`} slug={slug} />;
+}
+
+/**
+ * Radix Dialog provides focus management, Escape, scroll lock and accessible semantics.
+ * Closing plays the exit animation before returning to the previous route.
+ */
+function DetailModalContent({ slug }: { slug: string }) {
+  const router = useRouter();
   const [closing, setClosing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -30,26 +38,18 @@ export function DetailModal({ slug }: { slug: string }) {
     }, 180);
   }, [router]);
 
-  // Next may preserve an intercepted parallel-route segment in its cache. Reset
-  // the exit state whenever a new title is opened, including reopening the same URL.
   useEffect(() => {
-    closingRef.current = false;
-    setClosing(false);
     scrollRef.current?.scrollTo({ top: 0 });
-    if (closeTimer.current) {
-      clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
     return () => {
       if (closeTimer.current) {
         clearTimeout(closeTimer.current);
         closeTimer.current = null;
       }
     };
-  }, [slug, pathname]);
+  }, []);
 
   return (
-    <Dialog.Root open onOpenChange={(o) => !o && close()}>
+    <Dialog.Root open onOpenChange={(open) => !open && close()}>
       <Dialog.Portal>
         <Dialog.Overlay
           ref={scrollRef}
@@ -61,10 +61,10 @@ export function DetailModal({ slug }: { slug: string }) {
         >
           <Dialog.Content
             aria-describedby={undefined}
-            onOpenAutoFocus={(e) => {
-              // focus the dialog itself rather than the first button (no visible ring on open)
-              e.preventDefault();
-              (e.currentTarget as HTMLElement | null)?.focus();
+            onOpenAutoFocus={(event) => {
+              // Focus the dialog itself rather than the first button (no visible ring on open).
+              event.preventDefault();
+              (event.currentTarget as HTMLElement | null)?.focus();
             }}
             className={cn(
               "relative mx-auto min-h-dvh w-full overflow-hidden bg-elevated shadow-[0_3px_10px_rgba(0,0,0,0.75)] outline-none",

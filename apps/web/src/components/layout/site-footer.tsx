@@ -65,7 +65,7 @@ export function SiteFooter({ className, compact }: { className?: string; compact
 
       <div className="mt-9 border-t border-white/10 pt-5">
         <p className="text-xs leading-relaxed text-[#666]">
-          © {new Date().getFullYear()} {BRAND.name}. Nội dung và quyền sở hữu thuộc về các chủ sở hữu tương ứng.
+          © 2026 {BRAND.name}. Nội dung và quyền sở hữu thuộc về các chủ sở hữu tương ứng.
         </p>
         <p className="mt-2 text-[0.7rem] tracking-wide text-[#555]">{BRAND.name} · {BRAND.country}</p>
       </div>
