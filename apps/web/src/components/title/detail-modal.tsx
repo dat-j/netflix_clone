@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog } from "radix-ui";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { DetailView } from "./detail-view";
@@ -12,18 +12,41 @@ import { DetailView } from "./detail-view";
  */
 export function DetailModal({ slug }: { slug: string }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [closing, setClosing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closingRef = useRef(false);
 
   const close = useCallback(() => {
+    // Radix can report the same close from Escape, outside-click and the close button.
+    // Guard it so multiple history navigations cannot race each other.
+    if (closingRef.current) return;
+    closingRef.current = true;
     setClosing(true);
-    setTimeout(() => router.back(), 180);
+    closeTimer.current = setTimeout(() => {
+      router.back();
+      closeTimer.current = null;
+    }, 180);
   }, [router]);
 
-  // New title inside the same modal (similar titles) → back to top
+  // Next may preserve an intercepted parallel-route segment in its cache. Reset
+  // the exit state whenever a new title is opened, including reopening the same URL.
   useEffect(() => {
+    closingRef.current = false;
+    setClosing(false);
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [slug]);
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    return () => {
+      if (closeTimer.current) {
+        clearTimeout(closeTimer.current);
+        closeTimer.current = null;
+      }
+    };
+  }, [slug, pathname]);
 
   return (
     <Dialog.Root open onOpenChange={(o) => !o && close()}>
