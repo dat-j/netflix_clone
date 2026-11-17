@@ -69,13 +69,24 @@ Bucket ở chế độ riêng tư và không cần sửa CORS: trình duyệt kh
 |---|---|
 | `PORT` | `4000` (cố định để `web` gọi được qua mạng private) |
 | `NODE_ENV` | `production` |
-| `PUBLIC_WEB_URL` | `https://<domain-web>` (dùng trong link email) |
+| `PUBLIC_WEB_URL` | `https://<domain-web>` (link email và URL quay về sau thanh toán) |
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | secret ở trên |
+| `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` | thông tin kênh thanh toán từ my.payos.vn |
+| `TELEGRAM_BOT_TOKEN` | token bot từ @BotFather (dùng chung với service bot) |
+
 | `CDN_PROVIDER` | `local` (API tự phát segment; CDN thật chưa làm) |
 | `CDN_BASE_URL` | `https://<domain-web>/api/v1/dev-cdn` |
 | `CDN_SIGNING_SECRET` | secret ở trên |
 | `TMDB_API_KEY` | để trống nếu chưa có (các nút TMDB trong admin báo "chưa cấu hình") |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`, `MAIL_FROM` | nhà cung cấp email (Resend, SES…) |
+
+Sau khi deploy API, cấu hình webhook trong kênh payOS trỏ tới:
+
+```text
+https://<domain-web>/api/v1/webhooks/payos
+```
+
+Webhook phải gọi được từ Internet qua domain web. payOS xác minh endpoint và gửi chữ ký giao dịch; Lumio chỉ kích hoạt gói sau khi chữ ký và số tiền được xác minh. URL quay về giao diện là `https://<domain-web>/payment/result?paymentId=...`.
 
 ### Chỉ `worker`
 
@@ -117,11 +128,16 @@ Không chạy `seed:catalog` trên production: nó sinh 36 phim giả.
 
 ## Kiểm tra sau deploy
 
-- `https://<domain-web>/api/v1/health` trả `{"status":"ok"}`.
+- `https://<domain-web>/api/v1/health/live` trả trạng thái liveness.
+- `https://<domain-web>/api/v1/health` trả trạng thái readiness cùng latency PostgreSQL, Redis, uptime, memory và heartbeat worker. HTTP 503 nghĩa là PostgreSQL hoặc Redis chưa sẵn sàng.
+- Trang `/admin` → **Tổng quan** tự làm mới health check mỗi 15 giây; worker stale sẽ được đánh dấu cảnh báo.
 - Log `worker` có dòng `consuming queues=media-probe,media-transcode`.
-- Đăng nhập admin, transcode một phim ngắn, rồi phát thử bằng một tài khoản có gói.
+- Đăng nhập một tài khoản miễn phí và phát thử (720p, 1 luồng); sau đó thử thanh toán payOS bằng kênh test trước khi mở giao dịch thật.
+- Liên kết Telegram trong **Tài khoản**, bật thông báo và xuất bản một phim/tập thử để xác nhận bot gửi tin.
 
-## Giới hạn hiện tại
+## Vận hành và bảo mật
 
-- Video đi qua service `api` (chưa có CDN), nên băng thông và CPU của `api` tăng theo số người xem. Gắn Bunny/Cloudflare là bước tiếp theo khi có người dùng thật.
-- Chưa có cổng thanh toán; admin cấp gói thủ công trong `/admin` → **Người dùng**.
+- Tài khoản miễn phí xem được nội dung ở tối đa 720p và một luồng đồng thời; gói trả phí mở giới hạn theo cấu hình Plan.
+- payOS chỉ được bật khi đủ ba biến `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY`. Không đưa các khóa này vào frontend hoặc log.
+- Migration `telegram_notification_preferences` được áp dụng tự động bởi `prisma migrate deploy` khi API khởi động. Kiểm tra log deploy để chắc chắn migration thành công.
+- Health endpoint là probe kỹ thuật, không thay thế cảnh báo vận hành. Có thể cấu hình uptime monitor bên ngoài kiểm tra `/api/v1/health` và cảnh báo khi nhận HTTP khác 200.

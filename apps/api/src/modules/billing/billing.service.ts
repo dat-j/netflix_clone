@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
-import type { PlanDto, PlanInput, SubscriptionDto } from "@app/shared";
-import type { Plan, Subscription } from "@app/db";
+import type { CheckoutResponse, PaymentDto, PlanDto, PlanInput, SubscriptionDto } from "@app/shared";
+import type { Plan, Prisma, Subscription } from "@app/db";
 import { ApiException } from "../../common/api-exception.js";
 import { PrismaService } from "../../infra/prisma.service.js";
 import { toPlanDto, toSubscriptionDto } from "./mappers.js";
@@ -8,6 +8,7 @@ import { PAYMENT_PROVIDERS, type PaymentProvider, type WebhookRequest, paymentAm
 
 export const DEFAULT_MAX_PROFILES = 5;
 const EXPIRE_INTERVAL_MS = 5 * 60_000;
+const PENDING_PAYMENT_TTL_MS = 30 * 60_000;
 /** Không chạy updateMany hết hạn quá thường xuyên khi gọi lazy. */
 const LAZY_EXPIRE_MIN_GAP_MS = 30_000;
 
@@ -52,27 +53,29 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     return p;
   }
 
-  /** Điểm vào cho webhook của cổng thật (chưa mở route ở MVP). */
+  /** Xử lý webhook trong một transaction; updateMany(status=PENDING) bảo đảm idempotency khi provider retry song song. */
   async handleWebhook(providerCode: string, req: WebhookRequest): Promise<void> {
     const result = await this.getProvider(providerCode).handleWebhook(req);
     const payment = await this.prisma.payment.findUnique({ where: { id: result.paymentId } });
-    if (!payment || payment.status !== "PENDING") return; // idempotent
-    if (result.status === "FAILED") {
-      await this.prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: "FAILED", providerRef: result.providerRef, rawPayload: result.rawPayload as object },
-      });
-      return;
+    if (!payment) return;
+    if (result.amount !== undefined && result.amount !== payment.amount) {
+      throw new ApiException(400, "PAYMENT_AMOUNT_MISMATCH", "Số tiền thanh toán không khớp");
     }
-    const months = Number((payment.rawPayload as { months?: number } | null)?.months ?? 1);
-    const plan = await this.prisma.plan.findUniqueOrThrow({ where: { id: payment.planId } });
-    const sub = await this.extendSubscription(payment.userId, plan, months, providerCode, result.providerRef, null);
-    await this.prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: "SUCCEEDED", paidAt: new Date(), subscriptionId: sub.id,
-        providerRef: result.providerRef, rawPayload: result.rawPayload as object,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const claimed = await tx.payment.updateMany({
+        where: { id: payment.id, status: "PENDING" },
+        data: {
+          status: result.status,
+          paidAt: result.status === "SUCCEEDED" ? now : null,
+          rawPayload: { ...(payment.rawPayload as Record<string, unknown> | null), webhook: result.rawPayload as object },
+        },
+      });
+      if (!claimed.count || result.status !== "SUCCEEDED") return;
+      const months = Number((payment.rawPayload as { months?: number } | null)?.months ?? 1);
+      const plan = await tx.plan.findUniqueOrThrow({ where: { id: payment.planId } });
+      const sub = await this.extendSubscriptionInTransaction(tx, payment.userId, plan, months, providerCode, result.providerRef, null);
+      await tx.payment.update({ where: { id: payment.id }, data: { subscriptionId: sub.id } });
     });
   }
 
@@ -109,7 +112,12 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       where: { status: "ACTIVE", currentPeriodEnd: { lte: now } },
       data: { status: "EXPIRED" },
     });
+    const stalePayments = await this.prisma.payment.updateMany({
+      where: { status: "PENDING", createdAt: { lte: new Date(now.getTime() - PENDING_PAYMENT_TTL_MS) } },
+      data: { status: "FAILED" },
+    });
     if (count) this.logger.log(`Đã chuyển ${count} thuê bao sang EXPIRED`);
+    if (stalePayments.count) this.logger.log(`Đã đóng ${stalePayments.count} giao dịch quá hạn`);
     return count;
   }
 
@@ -150,43 +158,96 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
    * Gia hạn/kích hoạt: nếu đang có thuê bao ACTIVE còn hạn thì cộng thêm từ currentPeriodEnd
    * (đổi sang gói mới nếu khác), ngược lại tạo thuê bao mới bắt đầu từ bây giờ.
    */
-  private async extendSubscription(
-    userId: string, plan: Plan, months: number, provider: string, providerRef: string | null, note: string | null,
+  private async extendSubscriptionInTransaction(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    plan: Plan,
+    months: number,
+    provider: string,
+    providerRef: string | null,
+    note: string | null,
   ): Promise<SubWithPlan> {
-    return this.prisma.$transaction(async (tx) => {
-      const now = new Date();
-      const current = await tx.subscription.findFirst({
-        where: { userId, status: "ACTIVE", currentPeriodEnd: { gt: now } },
-        orderBy: { currentPeriodEnd: "desc" },
+    // Serialize subscription extensions for one account so concurrent successful payments cannot overwrite each other.
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId}::uuid FOR UPDATE`;
+    const now = new Date();
+    const current = await tx.subscription.findFirst({
+      where: { userId, status: "ACTIVE", currentPeriodEnd: { gt: now } },
+      orderBy: { currentPeriodEnd: "desc" },
+    });
+    if (current) {
+      await tx.subscription.updateMany({
+        where: { userId, status: "ACTIVE", id: { not: current.id } },
+        data: { status: "CANCELED", currentPeriodEnd: now },
       });
-      if (current) {
-        // Chỉ giữ một thuê bao ACTIVE.
-        await tx.subscription.updateMany({
-          where: { userId, status: "ACTIVE", id: { not: current.id } },
-          data: { status: "CANCELED", currentPeriodEnd: now },
-        });
-        return tx.subscription.update({
-          where: { id: current.id },
-          data: {
-            planId: plan.id,
-            currentPeriodEnd: addMonths(current.currentPeriodEnd, months),
-            cancelAtPeriodEnd: false,
-            provider,
-            providerRef,
-            note: note ?? current.note,
-          },
-          include: { plan: true },
-        });
-      }
-      await tx.subscription.updateMany({ where: { userId, status: "ACTIVE" }, data: { status: "EXPIRED" } });
-      return tx.subscription.create({
+      return tx.subscription.update({
+        where: { id: current.id },
         data: {
-          userId, planId: plan.id, status: "ACTIVE", currentPeriodStart: now,
-          currentPeriodEnd: addMonths(now, months), provider, providerRef, note,
+          planId: plan.id,
+          currentPeriodEnd: addMonths(current.currentPeriodEnd, months),
+          cancelAtPeriodEnd: false,
+          provider,
+          providerRef,
+          note: note ?? current.note,
         },
         include: { plan: true },
       });
+    }
+    await tx.subscription.updateMany({ where: { userId, status: "ACTIVE" }, data: { status: "EXPIRED" } });
+    return tx.subscription.create({
+      data: {
+        userId, planId: plan.id, status: "ACTIVE", currentPeriodStart: now,
+        currentPeriodEnd: addMonths(now, months), provider, providerRef, note,
+      },
+      include: { plan: true },
     });
+  }
+
+  private extendSubscription(
+    userId: string, plan: Plan, months: number, provider: string, providerRef: string | null, note: string | null,
+  ): Promise<SubWithPlan> {
+    return this.prisma.$transaction((tx) =>
+      this.extendSubscriptionInTransaction(tx, userId, plan, months, provider, providerRef, note),
+    );
+  }
+
+  async createCheckout(userId: string, planId: string, requestedMonths?: number): Promise<CheckoutResponse> {
+    const plan = await this.prisma.plan.findFirst({ where: { id: planId, isActive: true } });
+    if (!plan) throw new ApiException(404, "NOT_FOUND", "Gói này hiện không mở bán");
+    const months = requestedMonths ?? plan.intervalMonths;
+    if (!Number.isInteger(months) || months < plan.intervalMonths || months > 12 || months % plan.intervalMonths !== 0) {
+      throw new ApiException(400, "VALIDATION", "Thời hạn thanh toán không hợp lệ");
+    }
+    if (plan.currency !== "VND") throw new ApiException(400, "VALIDATION", "Cổng payOS hiện chỉ hỗ trợ gói VND");
+    const baseUrl = (process.env.PUBLIC_WEB_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    const returnUrl = new URL("/payment/result", baseUrl);
+    const cancelUrl = new URL("/plans", baseUrl);
+    cancelUrl.searchParams.set("payment", "cancelled");
+    const result = await this.getProvider("payos").createCheckout({
+      userId, plan, months, returnUrl: returnUrl.toString(), cancelUrl: cancelUrl.toString(),
+    });
+    return result;
+  }
+
+  async listPayments(userId: string): Promise<PaymentDto[]> {
+    const rows = await this.prisma.payment.findMany({
+      where: { userId },
+      include: { plan: true },
+      orderBy: { createdAt: "desc" },
+      take: 30,
+    });
+    return rows.map((p) => ({
+      id: p.id, plan: toPlanDto(p.plan), amount: p.amount, currency: p.currency,
+      status: p.status, provider: p.provider, paidAt: p.paidAt?.toISOString() ?? null, createdAt: p.createdAt.toISOString(),
+    }));
+  }
+
+  async getPayment(userId: string, id: string): Promise<PaymentDto> {
+    const p = await this.prisma.payment.findFirst({ where: { id, userId }, include: { plan: true } });
+    if (!p) throw new ApiException(404, "NOT_FOUND", "Không tìm thấy giao dịch");
+    return {
+      id: p.id, plan: toPlanDto(p.plan), amount: p.amount, currency: p.currency,
+      status: p.status, provider: p.provider, paidAt: p.paidAt?.toISOString() ?? null, createdAt: p.createdAt.toISOString(),
+    };
   }
 
   /** Admin cấp/gia hạn thủ công (ManualProvider), ghi Payment SUCCEEDED để có lịch sử. */

@@ -8,7 +8,7 @@
  * Cách dùng:
  *   @UseGuards(AuthGuard)                                   → cần đăng nhập
  *   @UseGuards(AuthGuard, ProfileGuard)                     → cần đăng nhập + đã chọn profile
- *   @UseGuards(AuthGuard, ProfileGuard, SubscriptionGuard)  → thêm thuê bao còn hạn
+ *   @UseGuards(AuthGuard, ProfileGuard, SubscriptionGuard)  → nạp quyền phát theo gói hoặc quyền miễn phí
  *   @Roles("ADMIN") @UseGuards(AuthGuard, RolesGuard)       → admin
  */
 import {
@@ -96,7 +96,7 @@ export class ProfileGuard implements CanActivate {
   }
 }
 
-/** Phải đặt sau AuthGuard. Admin luôn được coi là có quyền xem (gói cao nhất). */
+/** Phải đặt sau AuthGuard. Admin dùng quyền cao nhất; user không có gói nhận entitlement miễn phí 720p. */
 @Injectable()
 export class SubscriptionGuard implements CanActivate {
   constructor(private readonly prisma: PrismaService) {}
@@ -125,7 +125,17 @@ export class SubscriptionGuard implements CanActivate {
       };
       return true;
     }
-    throw new ApiException(402, "NO_SUBSCRIPTION", "Cần gói thuê bao còn hạn để xem");
+
+    // Tài khoản miễn phí vẫn xem được nội dung. Subscription chỉ mở khóa chất lượng cao hơn
+    // và thêm số luồng đồng thời, không còn là điều kiện bắt buộc để bắt đầu phát.
+    req.entitlement = {
+      subscriptionId: "free",
+      planCode: "free",
+      maxHeight: 720,
+      maxConcurrentStreams: 1,
+      currentPeriodEnd: new Date(Date.now() + 86_400_000),
+    };
+    return true;
   }
 }
 

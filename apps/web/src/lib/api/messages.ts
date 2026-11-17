@@ -13,7 +13,7 @@ export const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   TOKEN_INVALID: "Liên kết không hợp lệ hoặc đã hết hạn. Vui lòng yêu cầu liên kết mới.",
   PROFILE_REQUIRED: "Vui lòng chọn hồ sơ để tiếp tục.",
   PROFILE_LIMIT: "Bạn đã đạt số hồ sơ tối đa của tài khoản.",
-  NO_SUBSCRIPTION: "Bạn cần có gói thuê bao đang hoạt động để xem nội dung này.",
+  NO_SUBSCRIPTION: "Không thể xác thực quyền phát. Vui lòng thử lại.",
   TOO_MANY_STREAMS: "Tài khoản của bạn đang được xem trên quá nhiều thiết bị.",
   SESSION_ENDED: "Phiên xem đã kết thúc.",
   NOT_PLAYABLE: "Nội dung này hiện chưa thể phát.",
@@ -22,6 +22,10 @@ export const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   TELEGRAM_UNAVAILABLE: "Đăng nhập qua Telegram tạm thời chưa khả dụng. Vui lòng thử lại sau.",
   TELEGRAM_INIT_DATA_INVALID: "Phiên Telegram không hợp lệ hoặc đã hết hạn. Hãy đóng và mở lại BoxPhim từ Telegram.",
   TELEGRAM_LINK_CONFLICT: "Tài khoản Telegram hoặc tài khoản BoxPhim này đã được liên kết với tài khoản khác.",
+  PAYMENT_UNAVAILABLE: "Cổng thanh toán chưa được cấu hình. Vui lòng thử lại sau.",
+  PAYMENT_PROVIDER_ERROR: "Không thể tạo giao dịch thanh toán. Vui lòng thử lại sau.",
+  PAYMENT_SIGNATURE_INVALID: "Thông báo thanh toán không hợp lệ.",
+  PAYMENT_AMOUNT_MISMATCH: "Số tiền thanh toán không khớp với đơn hàng.",
 };
 
 export function errorMessage(error: unknown, overrides: Partial<Record<ApiErrorCode, string>> = {}): string {

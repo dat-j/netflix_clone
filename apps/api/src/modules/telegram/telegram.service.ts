@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { ProfileDto, TelegramLinkDto, TelegramLinkStatus } from "@app/shared";
+import type { ProfileDto, TelegramLinkDto, TelegramLinkStatus, TelegramNotificationPreferences } from "@app/shared";
 import type { TelegramAccount } from "@app/db";
 import { z } from "zod";
 import { ApiException } from "../../common/api-exception.js";
@@ -112,6 +112,85 @@ export class TelegramService {
     }
     this.logger.log(`User ${userId} đã liên kết Telegram`);
     return { available: this.available, link: toTelegramLinkDto(acc) };
+  }
+
+  async notificationPreferences(userId: string): Promise<TelegramNotificationPreferences> {
+    const account = await this.prisma.telegramAccount.findUnique({
+      where: { userId }, select: { notifyNewTitles: true, notifyNewEpisodes: true },
+    });
+    if (!account) throw new ApiException(409, "CONFLICT", "Hãy liên kết Telegram trước");
+    return account;
+  }
+
+  async updateNotificationPreferences(userId: string, input: TelegramNotificationPreferences): Promise<TelegramNotificationPreferences> {
+    const account = await this.prisma.telegramAccount.findUnique({ where: { userId }, select: { id: true } });
+    if (!account) throw new ApiException(409, "CONFLICT", "Hãy liên kết Telegram trước");
+    return this.prisma.telegramAccount.update({
+      where: { userId },
+      data: input,
+      select: { notifyNewTitles: true, notifyNewEpisodes: true },
+    });
+  }
+
+  private escapeHtml(value: string): string {
+    return value.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]!);
+  }
+
+  private async sendNotification(chatId: bigint, text: string): Promise<void> {
+    const token = this.botToken();
+    if (!token) return;
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId.toString(), text, parse_mode: "HTML", disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) throw new Error(`Telegram API trả về HTTP ${response.status}`);
+  }
+
+  /** Gửi thông báo phim mới cho những tài khoản đã bật tùy chọn. Không để lỗi Telegram chặn thao tác xuất bản. */
+  async notifyNewTitle(titleId: string): Promise<void> {
+    if (!this.available) return;
+    try {
+      const title = await this.prisma.title.findUnique({ where: { id: titleId }, select: { name: true, slug: true, status: true } });
+      if (!title || title.status !== "PUBLISHED") return;
+      const accounts = await this.prisma.telegramAccount.findMany({
+        where: { notifyNewTitles: true }, select: { telegramUserId: true },
+      });
+      const message = `🎬 <b>Phim mới trên Lumio</b>\n${this.escapeHtml(title.name)}\n<a href="${(process.env.PUBLIC_WEB_URL ?? "http://localhost:3000").replace(/\/$/, "")}/title/${encodeURIComponent(title.slug)}">Xem phim</a>`;
+      const results = await Promise.allSettled(accounts.map((a) => this.sendNotification(a.telegramUserId, message)));
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed) this.logger.warn(`Thông báo phim mới: ${failed}/${accounts.length} gửi thất bại`);
+    } catch (error) {
+      this.logger.warn(`Không gửi được thông báo phim mới: ${String(error)}`);
+    }
+  }
+
+  /** Gửi một thông báo gộp khi admin xuất bản một hoặc nhiều tập cùng lúc. */
+  async notifyNewEpisodes(titleId: string, episodeIds: string[]): Promise<void> {
+    if (!this.available || !episodeIds.length) return;
+    try {
+      const [title, episodes, accounts] = await Promise.all([
+        this.prisma.title.findUnique({ where: { id: titleId }, select: { name: true, slug: true, status: true } }),
+        this.prisma.episode.findMany({
+          where: { id: { in: episodeIds }, titleId, status: "PUBLISHED" },
+          orderBy: [{ season: { seasonNumber: "asc" } }, { episodeNumber: "asc" }],
+          select: { episodeNumber: true, season: { select: { seasonNumber: true } }, name: true },
+        }),
+        this.prisma.telegramAccount.findMany({ where: { notifyNewEpisodes: true }, select: { telegramUserId: true } }),
+      ]);
+      if (!title || title.status !== "PUBLISHED" || !episodes.length) return;
+      const list = episodes.slice(0, 8).map((e) =>
+        `• S${e.season.seasonNumber}E${e.episodeNumber}${e.name ? ` · ${this.escapeHtml(e.name)}` : ""}`,
+      ).join("\n");
+      const more = episodes.length > 8 ? `\n…và ${episodes.length - 8} tập khác` : "";
+      const message = `📺 <b>${this.escapeHtml(title.name)} có tập mới</b>\n${list}${more}\n<a href="${(process.env.PUBLIC_WEB_URL ?? "http://localhost:3000").replace(/\/$/, "")}/title/${encodeURIComponent(title.slug)}">Xem ngay</a>`;
+      const results = await Promise.allSettled(accounts.map((a) => this.sendNotification(a.telegramUserId, message)));
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed) this.logger.warn(`Thông báo tập mới: ${failed}/${accounts.length} gửi thất bại`);
+    } catch (error) {
+      this.logger.warn(`Không gửi được thông báo tập mới: ${String(error)}`);
+    }
   }
 
   async unlink(userId: string): Promise<void> {

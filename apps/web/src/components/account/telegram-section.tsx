@@ -1,6 +1,6 @@
 "use client";
 
-import type { TelegramLinkStatus } from "@app/shared";
+import type { TelegramLinkStatus, TelegramNotificationPreferences } from "@app/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Send } from "lucide-react";
 import Link from "next/link";
@@ -22,6 +22,20 @@ export function TelegramSection() {
   const inTelegram = !!useTelegram();
   const [confirm, setConfirm] = useState(false);
   const { data, isPending, error } = useQuery({ queryKey: KEY, queryFn: () => api<TelegramLinkStatus>("/auth/telegram/link") });
+  const preferences = useQuery({
+    queryKey: [...KEY, "notifications"],
+    queryFn: () => api<TelegramNotificationPreferences>("/auth/telegram/notifications"),
+    enabled: !!data?.link,
+  });
+  const savePreferences = useMutation({
+    mutationFn: (next: TelegramNotificationPreferences) =>
+      api<TelegramNotificationPreferences>("/auth/telegram/notifications", { method: "PATCH", body: next }),
+    onSuccess: (next) => {
+      qc.setQueryData([...KEY, "notifications"], next);
+      toast({ message: "Đã cập nhật tùy chọn thông báo" });
+    },
+    onError: (e) => toast({ message: errorMessage(e), tone: "error" }),
+  });
   const unlink = useMutation({
     mutationFn: () => api("/auth/telegram/link", { method: "DELETE" }),
     onSuccess: () => {
@@ -41,20 +55,51 @@ export function TelegramSection() {
       {isPending ? (
         <Skeleton className="h-16 w-full" />
       ) : link ? (
-        <div className="flex flex-wrap items-center gap-4" data-testid="telegram-linked">
-          <Send className="size-5 text-[#2aabee]" aria-hidden />
-          <div className="min-w-0 flex-1">
-            <p className="font-medium">
-              Đã liên kết với <strong>{who}</strong>
-            </p>
-            <p className="text-xs text-white/50">
-              Liên kết {formatDate(link.linkedAt)} · Mở BoxPhim từ Telegram để đăng nhập tự động
-            </p>
+        <>
+          <div className="flex flex-wrap items-center gap-4" data-testid="telegram-linked">
+            <Send className="size-5 text-[#2aabee]" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">
+                Đã liên kết với <strong>{who}</strong>
+              </p>
+              <p className="text-xs text-white/50">
+                Liên kết {formatDate(link.linkedAt)} · Mở BoxPhim từ Telegram để đăng nhập tự động
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setConfirm(true)}>
+              Hủy liên kết
+            </Button>
           </div>
-          <Button size="sm" variant="outline" onClick={() => setConfirm(true)}>
-            Hủy liên kết
-          </Button>
-        </div>
+          <div className="mt-4 space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-4">
+            <p className="text-sm font-semibold">Thông báo phim mới</p>
+            {preferences.data ? (
+              <>
+                <label className="flex cursor-pointer items-start gap-3 text-sm text-white/75">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 accent-[#e50914]"
+                    checked={preferences.data.notifyNewTitles}
+                    disabled={savePreferences.isPending}
+                    onChange={(event) => savePreferences.mutate({ ...preferences.data!, notifyNewTitles: event.target.checked })}
+                  />
+                  <span>Phim mới được xuất bản</span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-3 text-sm text-white/75">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 accent-[#e50914]"
+                    checked={preferences.data.notifyNewEpisodes}
+                    disabled={savePreferences.isPending}
+                    onChange={(event) => savePreferences.mutate({ ...preferences.data!, notifyNewEpisodes: event.target.checked })}
+                  />
+                  <span>Tập mới của các bộ phim</span>
+                </label>
+              </>
+            ) : (
+              <p className="text-xs text-white/50">{preferences.isError ? "Không tải được tùy chọn thông báo." : "Đang tải tùy chọn…"}</p>
+            )}
+          </div>
+        </>
       ) : (
         <div className="space-y-3 text-sm text-white/70" data-testid="telegram-unlinked">
           <p>Liên kết Telegram để tìm phim với bot BoxPhim và xem ngay trong Telegram mà không cần đăng nhập lại.</p>

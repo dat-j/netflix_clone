@@ -33,20 +33,20 @@ export function EmptyPanel({ icon, title, children, action }: { icon?: ReactNode
   );
 }
 
-/** Shown on browse for accounts without an ACTIVE subscription (payments come later). */
+/** Upsell banner: tài khoản miễn phí vẫn xem được nội dung ở tối đa 720p. */
 export function SubscriptionBanner() {
   const { data: me } = useMe();
   if (!me || me.subscription?.status === "ACTIVE") return null;
   const expired = !!me.subscription;
   return (
-    <div className="relative z-[1] mx-gutter mb-2 flex flex-col gap-3 rounded-md border border-white/10 bg-gradient-to-r from-brand/25 via-[#1f1f1f] to-[#1f1f1f] p-4 sm:flex-row sm:items-center md:p-5" data-testid="no-subscription-banner">
+    <div className="relative z-[1] mx-gutter mb-2 flex flex-col gap-3 rounded-md border border-white/10 bg-gradient-to-r from-brand/20 via-[#1f1f1f] to-[#1f1f1f] p-4 sm:flex-row sm:items-center md:p-5" data-testid="free-plan-banner">
       <Sparkles className="size-6 shrink-0 text-brand" aria-hidden />
       <div className="flex-1">
-        <p className="font-bold">{expired ? "Gói thuê bao của bạn đã hết hạn" : "Bạn chưa có gói thuê bao"}</p>
-        <p className="text-sm text-white/70">Bạn vẫn có thể khám phá thư viện. Để xem phim, hãy liên hệ để kích hoạt gói.</p>
+        <p className="font-bold">{expired ? "Gói thành viên của bạn đã kết thúc" : "Bạn đang dùng Lumio miễn phí"}</p>
+        <p className="text-sm text-white/70">Tiếp tục xem phim miễn phí ở tối đa 720p trên một thiết bị. Nâng cấp để mở khóa chất lượng cao hơn và nhiều luồng xem hơn.</p>
       </div>
       <Button asChild variant="brand" size="md">
-        <Link href="/plans">Xem các gói</Link>
+        <Link href="/plans">Nâng cấp gói</Link>
       </Button>
     </div>
   );

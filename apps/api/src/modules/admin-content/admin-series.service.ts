@@ -7,6 +7,7 @@ import { ApiException } from "../../common/api-exception.js";
 import { ImagePipelineService, pickImage } from "../storage/image-pipeline.service.js";
 import { StorageService } from "../storage/storage.service.js";
 import { invalidateCatalogCache } from "../catalog/cache.js";
+import { TelegramService } from "../telegram/telegram.service.js";
 import { AdminTitlesService, saveUploadedImage, toDate } from "./admin-titles.service.js";
 import { assetInclude, toAssetDto } from "./mappers.js";
 import {
@@ -51,6 +52,7 @@ export class AdminSeriesService {
     @Inject(ImagePipelineService) private readonly images: ImagePipelineService,
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(AdminTitlesService) private readonly titles: AdminTitlesService,
+    private readonly telegram: TelegramService,
   ) {}
 
   // ───────── mapper ─────────
@@ -275,6 +277,7 @@ export class AdminSeriesService {
     if (e.status !== "PUBLISHED") {
       await this.prisma.episode.update({ where: { id }, data: { status: "PUBLISHED" } });
       await invalidateCatalogCache(this.redis);
+      void this.telegram.notifyNewEpisodes(e.titleId, [id]);
     }
     return this.getEpisode(id);
   }
@@ -295,7 +298,7 @@ export class AdminSeriesService {
 
   /** Xuất bản mọi tập READY chưa xuất bản trong mùa; trả về các tập vừa xuất bản. */
   async publishReady(seasonId: string): Promise<AdminEpisode[]> {
-    await this.seasonRow(seasonId);
+    const season = await this.seasonRow(seasonId);
     const ready = await this.prisma.episode.findMany({
       where: { seasonId, status: { not: "PUBLISHED" }, mainAsset: { status: "READY" } }, select: { id: true },
     });
@@ -303,6 +306,7 @@ export class AdminSeriesService {
     const ids = ready.map((r) => r.id);
     await this.prisma.episode.updateMany({ where: { id: { in: ids } }, data: { status: "PUBLISHED" } });
     await invalidateCatalogCache(this.redis);
+    void this.telegram.notifyNewEpisodes(season.titleId, ids);
     const rows = await this.prisma.episode.findMany({ where: { id: { in: ids } }, orderBy: { episodeNumber: "asc" }, include: episodeInclude });
     return rows.map((r) => this.toEpisode(r));
   }

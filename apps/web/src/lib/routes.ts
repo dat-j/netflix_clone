@@ -5,7 +5,10 @@ export const GUEST_ONLY = ["/", "/login", "/signup"];
 
 /** Reachable by anyone (token links + marketing) */
 /** `/tg` = Telegram Mini App entry (does its own initData sign-in). */
-export const PUBLIC = ["/forgot-password", "/reset-password", "/verify-email", "/plans", "/tg"];
+export const PUBLIC = [
+  "/forgot-password", "/reset-password", "/verify-email", "/plans", "/tg",
+  "/terms", "/privacy", "/copyright", "/payment",
+];
 
 /** Need a session AND a selected profile */
 export const PROFILE_REQUIRED = ["/browse", "/title", "/search", "/my-list", "/watch"];

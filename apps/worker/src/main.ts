@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { env } from "./env.js";
 import { QUEUE_PROBE, QUEUE_TRANSCODE } from "@app/shared/media";
-import { closeContext, db } from "./lib/context.js";
+import { closeContext, db, redisConnection } from "./lib/context.js";
 import { ffmpegPath, ffprobePath, runProcess } from "./lib/ffmpeg.js";
 import { errMessage, logger } from "./lib/log.js";
 import { cleanStaleWorkDirs } from "./pipeline/transcode.js";
@@ -34,6 +35,14 @@ async function main() {
   await Promise.all([probe.worker.waitUntilReady(), transcode.worker.waitUntilReady()]);
   log.info("consuming", { queues: `${QUEUE_PROBE},${QUEUE_TRANSCODE}` });
 
+  const heartbeat = redisConnection();
+  const heartbeatKey = `health:worker:${process.pid}:${randomUUID()}`;
+  const beat = () => heartbeat.set(heartbeatKey, String(Date.now()), "EX", 45)
+    .catch((err: unknown) => log.warn("worker heartbeat failed", { err: errMessage(err) }));
+  await beat();
+  const heartbeatTimer = setInterval(() => void beat(), 15_000);
+  heartbeatTimer.unref();
+
   let stopping = false;
   const shutdown = async (sig: string) => {
     if (stopping) {
@@ -41,8 +50,10 @@ async function main() {
       process.exit(1);
     }
     stopping = true;
+    clearInterval(heartbeatTimer);
     log.info("shutting down", { signal: sig, graceMs: e.shutdownGraceMs });
     try {
+      await heartbeat.del(heartbeatKey).catch(() => undefined);
       await Promise.all([probe.close(), transcode.close(e.shutdownGraceMs)]);
       await closeContext();
     } catch (err) {

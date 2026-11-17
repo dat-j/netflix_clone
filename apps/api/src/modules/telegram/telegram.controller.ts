@@ -1,6 +1,6 @@
-import { Body, Controller, Delete, Get, HttpCode, Post, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Patch, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { SkipThrottle, Throttle, ThrottlerGuard } from "@nestjs/throttler";
-import type { TelegramAuthResponse, TelegramLinkResult, TelegramLinkStatus } from "@app/shared";
+import type { TelegramAuthResponse, TelegramLinkResult, TelegramLinkStatus, TelegramNotificationPreferences } from "@app/shared";
 import type { Response } from "express";
 import { z } from "zod";
 import { type AppRequest, AuthGuard, CurrentUser, PROFILE_COOKIE, type RequestUser } from "../../common/auth.js";
@@ -11,6 +11,10 @@ import { parseOrThrow } from "../auth/validation.js";
 import { TelegramService } from "./telegram.service.js";
 
 const initDataSchema = z.object({ initData: z.string().min(1).max(8192) });
+const notificationPreferencesSchema = z.object({
+  notifyNewTitles: z.boolean(),
+  notifyNewEpisodes: z.boolean(),
+});
 /**
  * Mini App sign-in runs on every launch and many Telegram users share carrier NAT IPs, while there is nothing to
  * brute-force (initData is HMAC-signed). So it gets a looser per-IP limit than password login; linking keeps STRICT.
@@ -65,6 +69,21 @@ export class TelegramController {
     const profile = await this.telegram.pickProfile(user.id, current);
     if (profile && profile.id !== current) setProfileCookie(res, profile.id);
     return { ...status, profile };
+  }
+
+  @Get("notifications")
+  @UseGuards(AuthGuard)
+  notifications(@CurrentUser() user: RequestUser): Promise<TelegramNotificationPreferences> {
+    return this.telegram.notificationPreferences(user.id);
+  }
+
+  @Patch("notifications")
+  @UseGuards(AuthGuard)
+  async updateNotifications(
+    @CurrentUser() user: RequestUser,
+    @Body() body: unknown,
+  ): Promise<TelegramNotificationPreferences> {
+    return this.telegram.updateNotificationPreferences(user.id, parseOrThrow(notificationPreferencesSchema, body));
   }
 
   @Delete("link")

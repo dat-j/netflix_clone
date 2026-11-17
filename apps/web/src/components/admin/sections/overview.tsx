@@ -4,16 +4,16 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { AlertOctagon, ArrowRight, CheckCircle2, Clock, Cpu, Eye, FileVideo, Film, PencilLine, Users, Wallet } from "lucide-react";
 import { cn, formatBytes, formatRelative } from "../lib/format";
-import { isActiveJob, useJobs, useStats } from "../lib/queries";
+import { isActiveJob, useJobs, useStats, useSystemHealth } from "../lib/queries";
 import { Card, EmptyState, ErrorState, PageHeader, ProgressBar, Skeleton } from "../ui/primitives";
 import { JobStatusBadge } from "../ui/status";
 
-function Tile({ label, value, sub, icon, href, tone = "zinc" }: { label: string; value: ReactNode; sub?: ReactNode; icon: ReactNode; href?: string; tone?: "zinc" | "red" | "blue" }) {
+function Tile({ label, value, sub, icon, href, tone = "zinc" }: { label: string; value: ReactNode; sub?: ReactNode; icon: ReactNode; href?: string; tone?: "zinc" | "red" | "blue" | "green" }) {
   const body = (
-    <div className={cn("admin-card flex h-full flex-col gap-1 rounded-xl border bg-white px-4 py-3.5 shadow-xs", href && "hover:border-zinc-300", tone === "red" ? "border-red-200" : "border-zinc-200")}>
+    <div className={cn("admin-card flex h-full flex-col gap-1 rounded-xl border bg-white px-4 py-3.5 shadow-xs", href && "hover:border-zinc-300", tone === "red" ? "border-red-200" : tone === "green" ? "border-emerald-200" : "border-zinc-200")}>
       <div className="flex items-center justify-between text-[12px] font-medium text-zinc-500">
         {label}
-        <span className={cn(tone === "red" ? "text-red-500" : tone === "blue" ? "text-indigo-500" : "text-zinc-400")}>{icon}</span>
+        <span className={cn(tone === "red" ? "text-red-500" : tone === "green" ? "text-emerald-500" : tone === "blue" ? "text-indigo-500" : "text-zinc-400")}>{icon}</span>
       </div>
       <div className="text-2xl font-semibold tracking-tight text-zinc-900 tabular-nums">{value}</div>
       {sub ? <div className="text-xs text-zinc-500">{sub}</div> : null}
@@ -31,6 +31,7 @@ function Tile({ label, value, sub, icon, href, tone = "zinc" }: { label: string;
 export function OverviewSection() {
   const stats = useStats();
   const jobs = useJobs({ status: "", page: 1 });
+  const health = useSystemHealth();
   const s = stats.data;
   const n = (v: number | undefined) => (v ?? 0).toLocaleString("vi-VN");
   const ic = "size-4";
@@ -57,7 +58,17 @@ export function OverviewSection() {
               <Tile label="Job đang chạy" value={n(s.jobsRunning)} icon={<Cpu className={ic} />} tone="blue" href="/admin/jobs" />
               <Tile label="Job chờ" value={n(s.jobsQueued)} icon={<Clock className={ic} />} href="/admin/jobs" />
               <Tile label="Job lỗi" value={n(s.jobsFailed)} icon={<AlertOctagon className={ic} />} tone={s.jobsFailed > 0 ? "red" : "zinc"} href="/admin/jobs" />
-              <Tile label="Hệ thống" value={<span className="text-base">Hoạt động</span>} icon={<CheckCircle2 className={cn(ic, "text-emerald-500")} />} sub="Tự làm mới mỗi 15 giây" />
+              <Tile
+                label="Hệ thống"
+                value={<span className="text-base">{health.isError ? "Có sự cố" : health.data ? "Đang hoạt động" : "Đang kiểm tra"}</span>}
+                icon={health.isError || health.data?.dependencies.worker.status !== "ok"
+                  ? <AlertOctagon className={ic} />
+                  : <CheckCircle2 className={ic} />}
+                tone={health.isError || (health.data && health.data.dependencies.worker.status !== "ok") ? "red" : health.data ? "green" : "blue"}
+                sub={health.data
+                  ? `DB ${health.data.dependencies.database.latencyMs}ms · Redis ${health.data.dependencies.redis.latencyMs}ms · Worker ${health.data.dependencies.worker.activeWorkers}`
+                  : health.isError ? "Không kết nối được health endpoint" : "Đang kiểm tra API, database và Redis"}
+              />
             </>
           )}
         </div>

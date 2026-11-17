@@ -11,6 +11,7 @@ import { ImagePipelineService } from "../storage/image-pipeline.service.js";
 import { StorageService } from "../storage/storage.service.js";
 import { invalidateCatalogCache } from "../catalog/cache.js";
 import { pageParams } from "../catalog/browse.service.js";
+import { TelegramService } from "../telegram/telegram.service.js";
 import { MediaQueuesService } from "./queues.service.js";
 import { assetInclude, jobInclude, toAssetDto, toJobDto } from "./mappers.js";
 import { pickUniqueSlug, slugify } from "./slug.js";
@@ -56,6 +57,7 @@ export class AdminTitlesService {
     @Inject(ImagePipelineService) private readonly images: ImagePipelineService,
     @Inject(MediaQueuesService) private readonly queues: MediaQueuesService,
     @Inject(StorageService) private readonly storage: StorageService,
+    private readonly telegram: TelegramService,
   ) {}
 
   /** Số tập đã xuất bản theo title (một query cho cả trang). */
@@ -236,6 +238,7 @@ export class AdminTitlesService {
       data: { status: "PUBLISHED", publishedAt: opts.publishedAt ?? (t.status === "PUBLISHED" && t.publishedAt ? t.publishedAt : new Date()) },
     });
     await invalidateCatalogCache(this.redis);
+    if (t.status !== "PUBLISHED") void this.telegram.notifyNewTitle(id);
     return this.get(id);
   }
 

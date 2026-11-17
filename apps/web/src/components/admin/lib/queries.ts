@@ -59,6 +59,28 @@ export function useStats() {
   return useQuery({ queryKey: qk.stats, queryFn: () => api<AdminStats>("/admin/stats"), refetchInterval: 15_000 });
 }
 
+export interface SystemHealth {
+  status: "ok" | "degraded";
+  uptimeSec: number;
+  responseTimeMs: number;
+  dependencies: {
+    database: { status: "ok" | "error"; latencyMs: number };
+    redis: { status: "ok" | "error"; latencyMs: number };
+    worker: { status: "ok" | "stale" | "unknown"; activeWorkers: number };
+  };
+  memory: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number };
+  timestamp: string;
+}
+
+export function useSystemHealth() {
+  return useQuery({
+    queryKey: ["admin", "system-health"],
+    queryFn: () => api<SystemHealth>("/health"),
+    refetchInterval: 15_000,
+    retry: false,
+  });
+}
+
 export interface TitleFilters {
   q: string;
   status: string;

@@ -7,12 +7,15 @@ const LINKS = [
   { label: "Trung tâm trợ giúp", href: `mailto:${BRAND.supportEmail}?subject=Yeu%20cau%20ho%20tro` },
   { label: "Tài khoản", href: "/account" },
   { label: "Gói dịch vụ", href: "/plans" },
+  { label: "Điều khoản sử dụng", href: "/terms" },
+  { label: "Quyền riêng tư", href: "/privacy" },
+  { label: "Bản quyền", href: "/copyright" },
   { label: "Trang chủ", href: "/" },
   { label: "Liên hệ với chúng tôi", href: `mailto:${BRAND.supportEmail}` },
 ] as const;
 
 export function SiteFooter({ className, compact }: { className?: string; compact?: boolean }) {
-  const links = compact ? LINKS.slice(0, 4) : LINKS;
+  const links = compact ? LINKS.slice(0, 7) : LINKS;
 
   return (
     <footer

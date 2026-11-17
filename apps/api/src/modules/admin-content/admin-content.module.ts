@@ -5,8 +5,10 @@ import { AdminCatalogService } from "./admin-catalog.service.js";
 import { MediaQueuesService } from "./queues.service.js";
 import { AdminSeriesController } from "./admin-series.controller.js";
 import { AdminSeriesService } from "./admin-series.service.js";
+import { TelegramModule } from "../telegram/telegram.module.js";
 
 @Module({
+  imports: [TelegramModule],
   controllers: [AdminContentController, AdminSeriesController],
   providers: [AdminTitlesService, AdminSeriesService, AdminCatalogService, MediaQueuesService],
   exports: [AdminTitlesService, AdminSeriesService, AdminCatalogService, MediaQueuesService],

@@ -27,7 +27,6 @@ interface Props {
 
 const BTN = "inline-flex h-12 items-center justify-center rounded-md px-7 text-base font-bold transition outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black md:h-[52px] md:text-lg";
 const PRIMARY = `${BTN} bg-white text-black hover:bg-white/80`;
-const BRAND = `${BTN} bg-[var(--brand,#e50914)] text-white hover:bg-[var(--brand-hover,#f6121d)]`;
 const SECONDARY = `${BTN} bg-white/15 text-white hover:bg-white/25`;
 
 /** Full-screen state shown instead of (or over) the video. */
@@ -50,17 +49,18 @@ export function PlayerScreen({ kind, backdropUrl, titleName, detailMessage, onRe
 
   switch (kind) {
     case "NO_SUBSCRIPTION":
-      heading = "Chọn gói để bắt đầu xem";
+      heading = "Không thể bắt đầu phát";
       body = (
         <>
-          {titleName ? <>Để xem <strong className="text-white">{titleName}</strong>, bạn </> : "Bạn "}
-          cần có gói thuê bao đang hoạt động. Xem phim không giới hạn, huỷ bất cứ lúc nào.
+          {titleName ? <>Phiên xem <strong className="text-white">{titleName}</strong> chưa được xác thực. </> : "Phiên xem chưa được xác thực. "}
+          Hãy thử lại. Tài khoản miễn phí vẫn xem được nội dung ở chất lượng tối đa 720p.
         </>
       );
       actions = (
         <>
-          <Link href="/plans" className={BRAND} data-testid="upsell-plans" autoFocus>
-            Xem các gói cước
+          {retryBtn}
+          <Link href="/plans" className={SECONDARY} data-testid="upsell-plans">
+            Xem quyền lợi gói thành viên
           </Link>
           {backBtn}
         </>

@@ -79,6 +79,8 @@ model TelegramAccount {
   lastName       String?
   languageCode   String?
   photoUrl       String?
+  notifyNewTitles   Boolean  @default(true)
+  notifyNewEpisodes Boolean  @default(true)
   linkedAt       DateTime @default(now())
   lastSeenAt     DateTime @default(now())
 

@@ -31,6 +31,8 @@
  *   POST   /auth/telegram/link       [auth] TelegramInitDataBody → TelegramLinkResult (idempotent; tự chọn profile như trên nếu chưa có `pid`)
  *            409 TELEGRAM_LINK_CONFLICT (Telegram id đã gắn user khác / user đã gắn Telegram id khác)
  *   DELETE /auth/telegram/link       [auth] → 204
+ *   GET    /auth/telegram/notifications [auth + linked Telegram] → TelegramNotificationPreferences
+ *   PATCH  /auth/telegram/notifications [auth + linked Telegram] TelegramNotificationPreferences → preferences
  *
  * PROFILES [auth]
  *   GET    /profiles                 → ProfileDto[]
@@ -43,6 +45,11 @@
  * BILLING
  *   GET    /plans                    (public) → PlanDto[]
  *   GET    /subscription             [auth] → SubscriptionDto | null
+ *   POST   /billing/checkout        [auth] { planId, months? } → CheckoutResponse
+ *   GET    /billing/payments        [auth] → PaymentDto[] (lịch sử 30 giao dịch gần nhất)
+ *   GET    /billing/payments/:id    [auth] → PaymentDto
+ *   POST   /webhooks/payos          [public] → xác minh chữ ký payOS, cập nhật Payment + Subscription idempotent
+ *   Gói miễn phí: không cần subscription; giới hạn mặc định 720p và 1 luồng đồng thời.
  *
  * BROWSE [auth + profile]
  *   GET    /browse/home?type=MOVIE|SERIES   → HomeResponse
@@ -60,9 +67,10 @@
  *   GET    /continue-watching               → TitleCard[] (có `progress`)
  *   DELETE /continue-watching/:titleId      → 204
  *
- * PLAYBACK [auth + profile + thuê bao ACTIVE]
+ * PLAYBACK [auth + profile]
  *   POST   /playback/sessions               StartPlaybackBody → PlaybackSession
- *            402 NO_SUBSCRIPTION | 409 TOO_MANY_STREAMS | 404 NOT_PLAYABLE
+ *            tài khoản miễn phí: tối đa 720p / 1 luồng; gói thành viên dùng giới hạn theo Plan
+ *            409 TOO_MANY_STREAMS | 404 NOT_PLAYABLE
  *   POST   /playback/sessions/:sid/heartbeat HeartbeatBody → 204 (410 SESSION_ENDED nếu bị chiếm slot)
  *   DELETE /playback/sessions/:sid          → 204
  *   GET    /playback/sessions/:sid/master.m3u8            → playlist (đã lọc theo maxHeight của gói)
@@ -130,7 +138,8 @@ export type ApiErrorCode =
   | "VALIDATION" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT"
   | "INVALID_CREDENTIALS" | "EMAIL_TAKEN" | "TOKEN_INVALID" | "PROFILE_REQUIRED" | "PROFILE_LIMIT"
   | "NO_SUBSCRIPTION" | "TOO_MANY_STREAMS" | "SESSION_ENDED" | "NOT_PLAYABLE" | "RATE_LIMITED" | "INTERNAL"
-  | "TELEGRAM_UNAVAILABLE" | "TELEGRAM_INIT_DATA_INVALID" | "TELEGRAM_LINK_CONFLICT";
+  | "TELEGRAM_UNAVAILABLE" | "TELEGRAM_INIT_DATA_INVALID" | "TELEGRAM_LINK_CONFLICT"
+  | "PAYMENT_UNAVAILABLE" | "PAYMENT_PROVIDER_ERROR" | "PAYMENT_SIGNATURE_INVALID" | "PAYMENT_AMOUNT_MISMATCH";
 
 export interface ApiError {
   statusCode: number;
@@ -253,6 +262,26 @@ export interface SubscriptionDto {
   currentPeriodEnd: string;
   cancelAtPeriodEnd: boolean;
   provider: string;
+}
+export interface CheckoutResponse {
+  paymentId: string;
+  provider: string;
+  redirectUrl: string | null;
+  instructions: string | null;
+}
+export interface PaymentDto {
+  id: string;
+  plan: PlanDto;
+  amount: number;
+  currency: string;
+  status: "PENDING" | "SUCCEEDED" | "FAILED" | "REFUNDED";
+  provider: string;
+  paidAt: string | null;
+  createdAt: string;
+}
+export interface TelegramNotificationPreferences {
+  notifyNewTitles: boolean;
+  notifyNewEpisodes: boolean;
 }
 export interface GrantSubscriptionBody { planCode: string; months: number; note?: string }
 

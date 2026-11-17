@@ -1,38 +1,64 @@
 "use client";
 
 import Link from "next/link";
-import { useIsClient } from "@/lib/hooks/use-media";
+import { useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { BRAND } from "@/lib/brand";
+import { useIsClient } from "@/lib/hooks/use-media";
+import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/messages";
 import { useMe } from "@/lib/queries";
+import { toast } from "@/lib/toast";
+import type { CheckoutResponse, PlanDto } from "@app/shared";
 import { PlanCards } from "./plan-cards";
 
-/** Plan grid with CTAs that depend on who is looking (guest / member / current plan). */
+/** Checkout luôn được khởi tạo ở server; client chỉ nhận URL chuyển hướng đã tạo. */
 export function PlanActions() {
   const isClient = useIsClient();
-  const hasHint = isClient && /(?:^|;\s*)lm_s=1/.test(document.cookie);
+  const hasHint = isClient && /(?:^|;\\s*)lm_s=1/.test(document.cookie);
   const { data: me } = useMe(hasHint);
   const activePlanId = me?.subscription?.status === "ACTIVE" ? me.subscription.plan.id : null;
+  const checkout = useMutation({
+    mutationFn: (plan: PlanDto) =>
+      api<CheckoutResponse>("/billing/checkout", {
+        method: "POST",
+        body: { planId: plan.id, months: plan.intervalMonths },
+      }),
+    onSuccess: (result) => {
+      if (result.redirectUrl) window.location.assign(result.redirectUrl);
+      else toast({ message: result.instructions ?? "Đã tạo yêu cầu thanh toán" });
+    },
+    onError: (error) => toast({ message: errorMessage(error), tone: "error" }),
+  });
 
   return (
     <PlanCards
-      action={(plan) =>
-        !me ? (
-          <Button asChild variant="brand" className="w-full">
-            <Link href="/signup">Đăng ký</Link>
+      action={(plan) => {
+        if (!me) {
+          return (
+            <Button asChild variant="brand" className="w-full">
+              <Link href="/signup">Đăng ký tài khoản</Link>
+            </Button>
+          );
+        }
+        if (plan.id === activePlanId) {
+          return (
+            <Button variant="outline" className="w-full" disabled>
+              Gói hiện tại
+            </Button>
+          );
+        }
+        return (
+          <Button
+            variant="brand"
+            className="w-full"
+            loading={checkout.isPending}
+            disabled={checkout.isPending}
+            onClick={() => checkout.mutate(plan)}
+          >
+            Chọn gói & thanh toán
           </Button>
-        ) : plan.id === activePlanId ? (
-          <Button variant="outline" className="w-full" disabled>
-            Gói hiện tại
-          </Button>
-        ) : (
-          <Button asChild variant="brand" className="w-full">
-            <a href={`mailto:${BRAND.supportEmail}?subject=${encodeURIComponent(`Kích hoạt gói ${plan.name}`)}&body=${encodeURIComponent(`Email tài khoản: ${me.user.email}`)}`}>
-              Liên hệ để kích hoạt
-            </a>
-          </Button>
-        )
-      }
+        );
+      }}
     />
   );
 }

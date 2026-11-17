@@ -1,7 +1,7 @@
 "use client";
 
-import type { DeviceSession, SubscriptionDto } from "@app/shared";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { DeviceSession, PaymentDto, SubscriptionDto } from "@app/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, ChevronRight, CircleAlert, Laptop, LogOut, Mail, MonitorSmartphone, Smartphone, Tablet, Tv } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -65,6 +65,7 @@ export function AccountPage() {
       ) : (
         <>
           <MembershipCard subscription={me.subscription} />
+          <PaymentHistorySection />
 
           <Section title="Thông tin đăng nhập">
             <div className="flex flex-wrap items-center gap-3">
@@ -110,28 +111,24 @@ function MembershipCard({ subscription }: { subscription: SubscriptionDto | null
   if (!active) {
     return (
       <div className="mb-8 overflow-hidden rounded-lg border border-white/10 bg-[#1c1c1c]" data-testid="membership-inactive">
-        <div className="bg-gradient-to-r from-brand/40 via-brand/10 to-transparent px-6 py-3 text-sm font-semibold">
-          {subscription ? `Gói ${subscription.plan.name} · ${STATUS_LABEL[subscription.status]}` : "Chưa có gói thuê bao"}
+        <div className="bg-gradient-to-r from-white/15 via-white/5 to-transparent px-6 py-3 text-sm font-semibold">
+          {subscription ? `Gói ${subscription.plan.name} · ${STATUS_LABEL[subscription.status]}` : "Gói miễn phí"}
         </div>
         <div className="space-y-4 p-6">
-          <h2 className="text-2xl font-bold">{subscription ? "Gia hạn để tiếp tục xem" : "Liên hệ để kích hoạt gói"}</h2>
+          <h2 className="text-2xl font-bold">{subscription ? "Gói thành viên đã kết thúc" : "Bạn đang xem bằng tài khoản miễn phí"}</h2>
           <p className="max-w-xl text-white/70">
             {subscription
-              ? `Gói của bạn đã kết thúc vào ${formatDate(subscription.currentPeriodEnd)}. `
-              : "Tài khoản của bạn chưa có gói xem phim. "}
-            Thanh toán trực tuyến sẽ sớm ra mắt — hiện tại, vui lòng liên hệ bộ phận hỗ trợ để được kích hoạt gói ngay.
+              ? `Gói ${subscription.plan.name} đã kết thúc vào ${formatDate(subscription.currentPeriodEnd)}. Bạn vẫn có thể xem nội dung miễn phí ở chất lượng tối đa 720p trên một thiết bị.`
+              : "Bạn vẫn có thể xem phim miễn phí ở chất lượng tối đa 720p trên một thiết bị. Nâng cấp nếu muốn mở khóa chất lượng cao hơn và xem đồng thời trên nhiều thiết bị."}
           </p>
           <div className="flex flex-wrap gap-3">
             <Button asChild variant="brand" size="lg">
-              <a href={`mailto:${BRAND.supportEmail}?subject=${encodeURIComponent("Kích hoạt gói thuê bao")}`}>Liên hệ kích hoạt</a>
+              <Link href="/plans">Nâng cấp gói thành viên</Link>
             </Button>
             <Button asChild variant="outline" size="lg">
-              <Link href="/plans">Xem các gói</Link>
+              <Link href="/browse">Tiếp tục xem phim</Link>
             </Button>
           </div>
-          <p className="text-sm text-white/50">
-            Hotline: {BRAND.supportPhone} · Email: {BRAND.supportEmail}
-          </p>
         </div>
       </div>
     );
@@ -162,6 +159,52 @@ function MembershipCard({ subscription }: { subscription: SubscriptionDto | null
         </div>
       </div>
     </div>
+  );
+}
+
+function PaymentHistorySection() {
+  const { data, isPending, error } = useQuery({
+    queryKey: ["billing", "payments"],
+    queryFn: () => api<PaymentDto[]>("/billing/payments"),
+    staleTime: 30_000,
+  });
+  const labels: Record<PaymentDto["status"], string> = {
+    PENDING: "Đang chờ",
+    SUCCEEDED: "Thành công",
+    FAILED: "Thất bại",
+    REFUNDED: "Đã hoàn tiền",
+  };
+
+  return (
+    <Section title="Lịch sử thanh toán">
+      {isPending ? (
+        <Skeleton className="h-20 w-full" />
+      ) : error ? (
+        <p className="text-sm text-white/50">Không tải được lịch sử thanh toán.</p>
+      ) : !data?.length ? (
+        <p className="text-sm text-white/50">Chưa có giao dịch nào.</p>
+      ) : (
+        <ul className="divide-y divide-white/10 rounded-md border border-white/10">
+          {data.map((payment) => (
+            <li key={payment.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">{payment.plan.name}</p>
+                <p className="mt-0.5 text-xs text-white/45">{formatDate(payment.createdAt)} · {payment.provider}</p>
+              </div>
+              <strong className="tabular-nums">{formatPrice(payment.amount, payment.currency)}</strong>
+              <span className={cn(
+                "rounded-full px-2.5 py-1 text-xs font-semibold",
+                payment.status === "SUCCEEDED" ? "bg-success/15 text-success" :
+                  payment.status === "FAILED" || payment.status === "REFUNDED" ? "bg-danger/15 text-danger" :
+                    "bg-warning/15 text-warning",
+              )}>
+                {labels[payment.status]}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
   );
 }
 
